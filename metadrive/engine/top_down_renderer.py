@@ -244,6 +244,19 @@ class TopDownRenderer:
         # LQY: do not delete the above line !!!!!
 
         # Setup some useful flags
+        
+        self.sign_icon_raw = {}
+        self.sign_icon_surfaces = {}
+        if hasattr(self.engine, 'traffic_sign_manager'):
+            sign_mgr = self.engine.traffic_sign_manager
+            for sign in sign_mgr.signs:
+                sign_type = type(sign).__name__
+                icon_path = sign.icon_path
+                try:
+                    self.sign_icon_raw[sign_type] = pygame.image.load(icon_path)
+                except Exception as e:
+                    print(f"Failed to load icon for {sign_type}: {e}")
+        
         self.logger = get_logger()
         if num_stack < 1:
             self.logger.warning("num_stack should be greater than 0. Current value: {}. Set to 1".format(num_stack))
@@ -524,6 +537,21 @@ class TopDownRenderer:
                     radius=5
                 )
                 self._deads.append(v)
+                
+        if not self.sign_icon_surfaces:
+            for name, img in self.sign_icon_raw.items():
+                scaled = pygame.transform.smoothscale(img, (24, 24))
+                self.sign_icon_surfaces[name] = scaled.convert_alpha() 
+            
+        if hasattr(self.engine, 'traffic_sign_manager'):
+            sign_mgr = self.engine.traffic_sign_manager
+            for sign in sign_mgr.signs:
+                sign_type = type(sign).__name__
+                icon = self.sign_icon_surfaces.get(sign_type)
+                if icon is not None and hasattr(sign, 'position'):
+                    pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
+                    rect = icon.get_rect(center=(pixel_x, pixel_y))
+                    self._frame_canvas.blit(icon, rect)
 
         v = self.current_track_agent
         canvas = self._frame_canvas
