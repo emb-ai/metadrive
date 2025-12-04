@@ -37,7 +37,7 @@ BASE_DEFAULT_CONFIG = dict(
     # Whether randomize the car model for the agent, randomly choosing from 4 types of cars
     random_agent_model=False,
     # The ego config is: env_config["vehicle_config"].update(env_config"[agent_configs"]["default_agent"])
-    agent_configs={DEFAULT_AGENT: dict(use_special_color=True, spawn_lane_index=None)},
+    agent_configs={DEFAULT_AGENT: dict(use_special_color=True)},
 
     # ===== multi-agent =====
     # This should be >1 in MARL envs, or set to -1 for spawning as many vehicles as possible.

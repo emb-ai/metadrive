@@ -28,6 +28,7 @@ from metadrive.utils.math import get_vertical_vector, norm, clip
 from metadrive.utils.math import wrap_to_pi
 from metadrive.utils.pg.utils import rect_region_detection
 from metadrive.utils.utils import get_object_from_node
+from metadrive.component.road_network.edge_road_network import EdgeRoadNetwork
 
 logger = get_logger()
 
@@ -341,7 +342,11 @@ class BaseVehicle(BaseObject, BaseVehicleState):
                 position = [0, 0]
                 heading = 0
             else:
-                lane = map.road_network.get_lane(self.config["spawn_lane_index"])
+                if map.road_network_type == EdgeRoadNetwork:
+                    lane_key = map.road_network.find_rightmost_lane_by_road_id(self.config["spawn_lane_index"])
+                else:
+                    lane_key = self.config["spawn_lane_index"]
+                lane = map.road_network.get_lane(lane_key)
                 position = lane.position(self.config["spawn_longitude"], self.config["spawn_lateral"])
                 heading = lane.heading_theta_at(self.config["spawn_longitude"])
         else:
@@ -361,7 +366,6 @@ class BaseVehicle(BaseObject, BaseVehicleState):
             self.set_position(position[:2], height=position[-1])
         else:
             raise ValueError()
-
         self.reset_navigation()
         self.body.clearForces()
         self.body.setLinearVelocity(Vec3(0, 0, 0))

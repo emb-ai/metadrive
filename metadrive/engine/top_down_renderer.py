@@ -542,6 +542,31 @@ class TopDownRenderer:
             for name, img in self.sign_icon_raw.items():
                 scaled = pygame.transform.smoothscale(img, (24, 24))
                 self.sign_icon_surfaces[name] = scaled.convert_alpha() 
+                
+        if (self.current_track_agent is not None and
+            hasattr(self.current_track_agent, 'navigation') and
+            hasattr(self.current_track_agent.navigation, 'final_lane') and
+            self.current_track_agent.navigation.final_lane is not None):
+
+            final_lane = self.current_track_agent.navigation.final_lane
+            target_pos = final_lane.position(final_lane.length, 0)
+
+            pixel_x, pixel_y = self._frame_canvas.pos2pix(target_pos[0], target_pos[1])
+
+            pygame.draw.circle(
+                surface=self._frame_canvas,
+                color=(255, 0, 0),
+                center=(pixel_x, pixel_y),
+                radius=6,
+                width=0
+            )
+            pygame.draw.circle(
+                surface=self._frame_canvas,
+                color=(255, 255, 255),
+                center=(pixel_x, pixel_y),
+                radius=6,
+                width=2
+            )
             
         if hasattr(self.engine, 'traffic_sign_manager'):
             sign_mgr = self.engine.traffic_sign_manager

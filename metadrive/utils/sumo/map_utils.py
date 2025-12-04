@@ -319,17 +319,24 @@ def extract_map_features(graph):
     #     }
 
     # build map lanes
+    from shapely.geometry import Polygon
+    ret = {}
+
+    # Сначала создадим все полосы без связей
+    lane_names = set()
     for road_id, road in graph.roads.items():
         for lane in road.lanes:
-
             id = "lane_{}".format(lane.name)
-
+            lane_names.add(id)
             boundary_polygon = [(x, y) for x, y in lane.shape.shape.exterior.coords]
             if lane.type == 'driving':
                 ret[id] = {
                     SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
                     SD.POLYLINE: lane.sumolib_obj.getShape(),
                     SD.POLYGON: boundary_polygon,
+                    # Заглушки — заполним ниже
+                    "entry_lanes": [],
+                    "exit_lanes": [],
                 }
             elif lane.type == 'sidewalk':
                 ret[id] = {
@@ -347,6 +354,27 @@ def extract_map_features(graph):
                     SD.TYPE: MetaDriveType.CROSSWALK,
                     SD.POLYGON: boundary_polygon,
                 }
+                
+    for lane_name, lane_node in graph.lanes.items():
+        lane_id = "lane_{}".format(lane_name)
+        if lane_id not in ret:
+            continue  # не driving lane — пропускаем
+
+        # exit_lanes = ID полос, в которые можно попасть
+        exit_ids = []
+        for out_lane in lane_node.outgoing:
+            out_id = "lane_{}".format(out_lane.name)
+            if out_id in ret:  # только если это driving lane
+                exit_ids.append(out_id)
+        ret[lane_id]["exit_lanes"] = exit_ids
+
+        # entry_lanes = откуда можно приехать
+        entry_ids = []
+        for in_lane in lane_node.incoming:
+            in_id = "lane_{}".format(in_lane.name)
+            if in_id in ret:
+                entry_ids.append(in_id)
+        ret[lane_id]["entry_lanes"] = entry_ids
 
     for lane_divider_id, lane_divider in enumerate(graph.lane_dividers):
         id = "lane_divider_{}".format(lane_divider_id)

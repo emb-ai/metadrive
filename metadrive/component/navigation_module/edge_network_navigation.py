@@ -49,7 +49,6 @@ class EdgeNetworkNavigation(BaseNavigation):
             lane, new_l_index = possible_lanes[0][:-1]
 
         dest = vehicle.config["destination"]
-
         current_lane = lane
         destination = dest if dest is not None else None
         assert current_lane is not None, "spawn place is not on road!"
@@ -71,6 +70,9 @@ class EdgeNetworkNavigation(BaseNavigation):
         #     self.checkpoints.append(current_lane_index)
         self._target_checkpoints_index = [0, 1]
         # update routing info
+        if len(self.checkpoints) == 0:
+            self.checkpoints.append(current_lane_index)
+            self.checkpoints.append(current_lane_index)
         assert len(self.checkpoints) > 0, "Can not find a route from {} to {}".format(current_lane_index, destination)
         self.final_lane = self.map.road_network.get_lane(self.checkpoints[-1])
         self._navi_info.fill(0.0)
@@ -243,6 +245,6 @@ class EdgeNetworkNavigation(BaseNavigation):
             if self.FORCE_CALCULATE:
                 lane_index, _ = self.map.road_network.get_closest_lane_index(ego_vehicle.position)
                 lane = self.map.road_network.get_lane(lane_index)
-        self.current_lane = lane
+        self._current_lane = lane
         assert lane_index == lane.index, "lane index mismatch!"
         return lane, lane_index

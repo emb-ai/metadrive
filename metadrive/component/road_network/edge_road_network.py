@@ -29,6 +29,33 @@ class EdgeRoadNetwork(BaseRoadNetwork):
             left_lanes=lane.left_lanes or [],
             right_lanes=lane.right_lanes or []
         )
+        
+    def find_rightmost_lane_by_road_id(self, original_road_id):
+        target = str(original_road_id)
+        candidates = []
+
+        for lane_key in self.graph.keys():
+            if not isinstance(lane_key, str) or not lane_key.startswith("lane_"):
+                continue
+
+            parts = lane_key.split("_")
+            if len(parts) < 3:
+                continue
+
+            try:
+                edge_id = parts[1]
+                lane_index = int(parts[2])
+            except (ValueError, IndexError):
+                continue
+
+            if edge_id == target or edge_id == f"-{target}":
+                candidates.append((lane_key, lane_index))
+
+        if not candidates:
+            return None
+
+        rightmost = max(candidates, key=lambda x: x[1])
+        return rightmost[0]
 
     def get_lane(self, index: LaneIndex):
         return self.graph[index].lane
@@ -81,6 +108,8 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 if _next in path:
                     # circle
                     continue
+                if goal is None and len(path) > 3:
+                    yield path + [_next]
                 if _next == goal:
                     yield path + [_next]
                 elif _next in self.graph:
