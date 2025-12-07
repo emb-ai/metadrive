@@ -358,17 +358,15 @@ def extract_map_features(graph):
     for lane_name, lane_node in graph.lanes.items():
         lane_id = "lane_{}".format(lane_name)
         if lane_id not in ret:
-            continue  # не driving lane — пропускаем
+            continue
 
-        # exit_lanes = ID полос, в которые можно попасть
         exit_ids = []
         for out_lane in lane_node.outgoing:
             out_id = "lane_{}".format(out_lane.name)
-            if out_id in ret:  # только если это driving lane
+            if out_id in ret:
                 exit_ids.append(out_id)
         ret[lane_id]["exit_lanes"] = exit_ids
 
-        # entry_lanes = откуда можно приехать
         entry_ids = []
         for in_lane in lane_node.incoming:
             in_id = "lane_{}".format(in_lane.name)

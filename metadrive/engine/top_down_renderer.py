@@ -539,9 +539,10 @@ class TopDownRenderer:
                 self._deads.append(v)
                 
         if not self.sign_icon_surfaces:
-            for name, img in self.sign_icon_raw.items():
-                scaled = pygame.transform.smoothscale(img, (24, 24))
-                self.sign_icon_surfaces[name] = scaled.convert_alpha() 
+            if  pygame.display.get_init():
+                for name, img in self.sign_icon_raw.items():
+                    scaled = pygame.transform.smoothscale(img, (24, 24))
+                    self.sign_icon_surfaces[name] = scaled.convert_alpha()
                 
         if (self.current_track_agent is not None and
             hasattr(self.current_track_agent, 'navigation') and
