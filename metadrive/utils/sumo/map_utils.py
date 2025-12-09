@@ -18,6 +18,7 @@ except ImportError:
     raise ImportError("Please install sumolib before running this script via: pip install sumolib")
 from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.geometry.base import CAP_STYLE, JOIN_STYLE
+from collections import defaultdict
 
 
 def buffered_shape(shape, width: float = 1.0) -> Polygon:
@@ -220,6 +221,7 @@ class RoadLaneJunctionGraph:
             )
             junction.shape = junction.sumolib_obj.getShape()
 
+        self.lane_turns = defaultdict(set)
         for junction_id, junction in self.junctions.items():
 
             for incoming in junction.sumolib_obj.getIncoming():  # Link junction
@@ -232,7 +234,9 @@ class RoadLaneJunctionGraph:
                 from_lane_id = conn.getFromLane().getID()  # Link lanes
                 to_lane_id = conn.getToLane().getID()
                 via_lane_id = conn.getViaLaneID()
-
+                direction = conn.getDirection()
+                if direction in ('s', 'l', 'r', 't'):
+                    self.lane_turns[from_lane_id].add(direction)
                 from_road_id = conn.getFrom().getID()  # Link roads
                 to_road_id = conn.getTo().getID()
                 if via_lane_id == '':  # Maybe we could skip this, but not sure
@@ -337,6 +341,8 @@ def extract_map_features(graph):
                     # Заглушки — заполним ниже
                     "entry_lanes": [],
                     "exit_lanes": [],
+                    "left_lanes": [],
+                    "right_lanes": [],
                 }
             elif lane.type == 'sidewalk':
                 ret[id] = {
@@ -354,6 +360,40 @@ def extract_map_features(graph):
                     SD.TYPE: MetaDriveType.CROSSWALK,
                     SD.POLYGON: boundary_polygon,
                 }
+                
+    for lane_id, directions in graph.lane_turns.items():
+        if not directions:
+            continue
+        base_lane_id = f"lane_{lane_id}"
+        if base_lane_id not in ret:
+            continue
+
+        polyline = ret[base_lane_id][SD.POLYLINE]
+        if not polyline:
+            continue
+
+        end_point = polyline[-1]
+
+        arrow_id = f"turn_arrow_{lane_id}"
+        ret[base_lane_id]["dirs"] = directions
+                
+    for road_id, road in graph.roads.items():
+        for lane in road.lanes:
+            if lane.type != 'driving':
+                continue
+            lane_id = f"lane_{lane.name}"
+            if lane_id not in ret:
+                continue
+
+            left_lanes = []
+            right_lanes = []
+            if lane.left_neigh and lane.left_neigh.type == 'driving':
+                left_lanes.append(f"lane_{lane.left_neigh.name}")
+            if lane.right_neigh and lane.right_neigh.type == 'driving':
+                right_lanes.append(f"lane_{lane.right_neigh.name}")
+
+            ret[lane_id]["left_lanes"] = left_lanes
+            ret[lane_id]["right_lanes"] = right_lanes
                 
     for lane_name, lane_node in graph.lanes.items():
         lane_id = "lane_{}".format(lane_name)

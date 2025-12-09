@@ -139,8 +139,8 @@ class ScenarioDescription(dict):
     POLYGON = "polygon"
     LEFT_BOUNDARIES = "left_boundaries"
     RIGHT_BOUNDARIES = "right_boundaries"
-    LEFT_NEIGHBORS = "left_neighbor"
-    RIGHT_NEIGHBORS = "right_neighbor"
+    LEFT_NEIGHBORS = "left_lanes"
+    RIGHT_NEIGHBORS = "right_lanes"
     ENTRY = "entry_lanes"
     EXIT = "exit_lanes"
 
@@ -157,6 +157,7 @@ class ScenarioDescription(dict):
     #  for object position/heading
     POSITION = "position"
     HEADING = "heading"
+    DIRECTIONS = "dirs"
 
     METADRIVE_PROCESSED = "metadrive_processed"
     TIMESTEP = "ts"
