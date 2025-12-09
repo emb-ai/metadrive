@@ -4,6 +4,7 @@ from metadrive.obs.top_down_obs_multi_channel import TopDownMultiChannel
 from metadrive.utils import Config
 
 
+
 class TopDownSingleFrameMetaDriveEnv(MetaDriveEnv):
     @classmethod
     def default_config(cls) -> Config:
