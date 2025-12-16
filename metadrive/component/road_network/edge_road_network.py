@@ -8,7 +8,7 @@ from metadrive.scenario.scenario_description import ScenarioDescription as SD
 from metadrive.utils.math import get_boxes_bounding_box
 from metadrive.utils.pg.utils import get_lanes_bounding_box
 
-lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes", "dirs"])
+lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes", "turns"])
 
 
 class EdgeRoadNetwork(BaseRoadNetwork):
@@ -28,7 +28,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
             exit_lanes=lane.exit_lanes or [],
             left_lanes=lane.left_lanes or [],
             right_lanes=lane.right_lanes or [],
-            dirs=lane.dirs or []
+            turns=lane.turns or []
         )
         
     def find_rightmost_lane_by_road_id(self, original_road_id):
@@ -155,7 +155,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 SD.EXIT: lane_info.exit_lanes,
                 SD.LEFT_NEIGHBORS: lane_info.left_lanes,
                 SD.RIGHT_NEIGHBORS: lane_info.right_lanes,
-                SD.DIRECTIONS: lane_info.dirs,
+                SD.TURNS: lane_info.turns,
                 "speed_limit_kmh": lane_info.lane.speed_limit
             }
         return ret

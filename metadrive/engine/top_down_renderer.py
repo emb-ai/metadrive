@@ -23,44 +23,29 @@ color_white = (255, 255, 255)
 import math
 
 
-def draw_turn_sign(surface, start_pos, directions, color=(255, 255, 0), bg_color=(0, 0, 0, 128), sign_size=18):
-    """
-    Рисует знак поворотов в виде прямоугольника с группой стрелок внутри.
+def draw_turn_sign(surface, start_pos, directions, color=(255, 255, 255), bg_color=(0, 0, 255, 128), sign_size=18, first=True):
     
-    :param surface: pygame.Surface
-    :param start_pos: (x, y) в пикселях — центр знака
-    :param directions: список направлений, например ['s', 'r']
-    :param color: цвет стрелок
-    :param bg_color: цвет фона (RGBA, alpha для прозрачности)
-    :param sign_size: размер знака (ширина = высота)
-    """
     if not directions:
         return
+    if first:
+        half = sign_size // 2
+        rect = pygame.Rect(start_pos[0] - half, start_pos[1] - half, sign_size + 4, sign_size + 4)
 
-    half = sign_size // 2
-    rect = pygame.Rect(start_pos[0] - half, start_pos[1] - half, sign_size, sign_size)
+        s = pygame.Surface((sign_size, sign_size), pygame.SRCALPHA)
+        s.fill(bg_color)
+        surface.blit(s, (start_pos[0] - half, start_pos[1] - half))
 
-    # === Фон (полупрозрачный чёрный прямоугольник) ===
-    # pygame не поддерживает прозрачность напрямую в draw.rect, поэтому:
-    s = pygame.Surface((sign_size, sign_size), pygame.SRCALPHA)
-    s.fill(bg_color)  # bg_color должен быть (R, G, B, A)
-    surface.blit(s, (start_pos[0] - half, start_pos[1] - half))
-
-    # === Стрелки внутри знака ===
-    # Локальные координаты: центр знака = (0, 0)
     center_local = (0, 0)
-    arrow_length = sign_size * 0.3
+    arrow_length = sign_size * 0.5
     arrow_size = sign_size * 0.15
 
-    # Сопоставление направлений → углы (внутри знака)
     local_angle_map = {
-        's': -math.pi / 2,      # вверх
-        'r': 0,                 # направо → но мы чуть сместим
-        'l': math.pi,           # налево
-        't': math.pi / 2,       # вниз (редко)
+        's': -math.pi / 2,
+        'r': 0,
+        'l': math.pi,
+        't': math.pi / 2,
     }
 
-    # Настройка смещений для лучшего размещения
     if set(directions) == {'s', 'r'}:
         offsets = {'s': (-3, 0), 'r': (3, 0)}
     elif set(directions) == {'s', 'l'}:
@@ -81,10 +66,8 @@ def draw_turn_sign(surface, start_pos, directions, color=(255, 255, 0), bg_color
         sp = (start_pos[0] + ox, start_pos[1] + oy)
         ep = (sp[0] + dx, sp[1] + dy)
 
-        # Линия стрелки
-        pygame.draw.line(surface, color, sp, ep, 2)
+        pygame.draw.line(surface, color, sp, ep, 4)
 
-        # Наконечник
         arrow_tip_angle = math.pi / 6
         left_tip = (
             ep[0] + arrow_size * math.cos(angle + math.pi - arrow_tip_angle),
@@ -94,8 +77,8 @@ def draw_turn_sign(surface, start_pos, directions, color=(255, 255, 0), bg_color
             ep[0] + arrow_size * math.cos(angle + math.pi + arrow_tip_angle),
             ep[1] + arrow_size * math.sin(angle + math.pi + arrow_tip_angle)
         )
-        pygame.draw.line(surface, color, ep, left_tip, 2)
-        pygame.draw.line(surface, color, ep, right_tip, 2)
+        pygame.draw.line(surface, color, ep, left_tip, 4)
+        pygame.draw.line(surface, color, ep, right_tip, 4)
 
 def draw_top_down_map_native(
     map,
@@ -170,18 +153,6 @@ def draw_top_down_map_native(
                             # max(surface.pix(LaneGraphics.STRIPE_WIDTH),
                             surface.pix(PGDrivableAreaProperty.LANE_LINE_WIDTH) * 2
                         )
-            if MetaDriveType.is_lane(obj["type"]) and "dirs" in obj and obj["dirs"]:
-                if len(obj["polyline"]) == 0:
-                    continue
-                end_point = obj["polyline"][-1]
-                screen_end = surface.pos2pix(end_point[0], end_point[1])  # единая точка старта
-
-                # Сортируем для консистентности (не обязательно, но красиво)
-                dir_order = {'l': 0, 's': 1, 'r': 2, 't': 3}
-                sorted_dirs = sorted(obj["dirs"], key=lambda d: dir_order.get(d, 99))
-
-                for d in sorted_dirs:
-                    draw_turn_sign(surface, screen_end, d, color=(255, 0, 0))
     else:
         if isinstance(map, ScenarioMap):
             line_sample_interval = 2
@@ -662,7 +633,15 @@ class TopDownRenderer:
             for sign in sign_mgr.signs:
                 sign_type = type(sign).__name__
                 icon = self.sign_icon_surfaces.get(sign_type)
-                if icon is not None and hasattr(sign, 'position'):
+                if sign_type == "DirectionSign":
+                    dir_order = {'l': 0, 's': 1, 'r': 2, 't': 3}
+                    sorted_dirs = sorted(sign.lane.turns, key=lambda d: dir_order.get(d["direction"], 99))
+                    screen_end = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
+                    first = True
+                    for d in sorted_dirs:
+                        draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
+                        first = False
+                elif icon is not None and hasattr(sign, 'position'):
                     pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
                     rect = icon.get_rect(center=(pixel_x, pixel_y))
                     self._frame_canvas.blit(icon, rect)

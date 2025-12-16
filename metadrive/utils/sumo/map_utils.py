@@ -221,7 +221,6 @@ class RoadLaneJunctionGraph:
             )
             junction.shape = junction.sumolib_obj.getShape()
 
-        self.lane_turns = defaultdict(set)
         for junction_id, junction in self.junctions.items():
 
             for incoming in junction.sumolib_obj.getIncoming():  # Link junction
@@ -231,12 +230,9 @@ class RoadLaneJunctionGraph:
 
             conns = junction.sumolib_obj.getConnections()
             for conn in conns:
-                from_lane_id = conn.getFromLane().getID()  # Link lanes
+                from_lane_id = conn.getFromLane().getID()
                 to_lane_id = conn.getToLane().getID()
                 via_lane_id = conn.getViaLaneID()
-                direction = conn.getDirection()
-                if direction in ('s', 'l', 'r', 't'):
-                    self.lane_turns[from_lane_id].add(direction)
                 from_road_id = conn.getFrom().getID()  # Link roads
                 to_road_id = conn.getTo().getID()
                 if via_lane_id == '':  # Maybe we could skip this, but not sure
@@ -340,6 +336,7 @@ def extract_map_features(graph):
                     SD.POLYGON: boundary_polygon,
                     # Заглушки — заполним ниже
                     "entry_lanes": [],
+                    "turns": [],
                     "exit_lanes": [],
                     "left_lanes": [],
                     "right_lanes": [],
@@ -361,21 +358,6 @@ def extract_map_features(graph):
                     SD.POLYGON: boundary_polygon,
                 }
                 
-    for lane_id, directions in graph.lane_turns.items():
-        if not directions:
-            continue
-        base_lane_id = f"lane_{lane_id}"
-        if base_lane_id not in ret:
-            continue
-
-        polyline = ret[base_lane_id][SD.POLYLINE]
-        if not polyline:
-            continue
-
-        end_point = polyline[-1]
-
-        arrow_id = f"turn_arrow_{lane_id}"
-        ret[base_lane_id]["dirs"] = directions
                 
     for road_id, road in graph.roads.items():
         for lane in road.lanes:
@@ -413,6 +395,33 @@ def extract_map_features(graph):
             if in_id in ret:
                 entry_ids.append(in_id)
         ret[lane_id]["entry_lanes"] = entry_ids
+        
+    for lane_name, lane_node in graph.lanes.items():
+        base_lane_id = f"lane_{lane_name}"
+        if base_lane_id not in ret or lane_node.type != 'driving':
+            continue
+
+        turns = []
+        for out_lane in lane_node.outgoing:
+            direction = None
+            for conn in lane_node.sumolib_obj.getOutgoing():
+                if conn.getToLane() == out_lane.sumolib_obj or conn.getViaLaneID() == out_lane.name:
+                    direction = conn.getDirection()
+                    if direction in ('s', 'l', 'r', 't'):
+                        break
+            
+            if direction is None:
+                continue 
+
+            to_lane_id = f"lane_{out_lane.name}"
+            if to_lane_id in ret:  # только если целевая полоса сохранена
+                turns.append({
+                    "direction": direction,
+                    "to_lane": to_lane_id
+                })
+
+        if turns:
+            ret[base_lane_id]["turns"] = turns
 
     for lane_divider_id, lane_divider in enumerate(graph.lane_dividers):
         id = "lane_divider_{}".format(lane_divider_id)

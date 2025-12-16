@@ -143,6 +143,7 @@ class ScenarioDescription(dict):
     RIGHT_NEIGHBORS = "right_lanes"
     ENTRY = "entry_lanes"
     EXIT = "exit_lanes"
+    TURNS = "turns"
 
     # object
     TYPE = "type"
@@ -157,7 +158,6 @@ class ScenarioDescription(dict):
     #  for object position/heading
     POSITION = "position"
     HEADING = "heading"
-    DIRECTIONS = "dirs"
 
     METADRIVE_PROCESSED = "metadrive_processed"
     TIMESTEP = "ts"
