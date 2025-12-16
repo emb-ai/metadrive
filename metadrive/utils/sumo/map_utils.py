@@ -18,6 +18,7 @@ except ImportError:
     raise ImportError("Please install sumolib before running this script via: pip install sumolib")
 from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.geometry.base import CAP_STYLE, JOIN_STYLE
+from collections import defaultdict
 
 
 def buffered_shape(shape, width: float = 1.0) -> Polygon:
@@ -229,10 +230,9 @@ class RoadLaneJunctionGraph:
 
             conns = junction.sumolib_obj.getConnections()
             for conn in conns:
-                from_lane_id = conn.getFromLane().getID()  # Link lanes
+                from_lane_id = conn.getFromLane().getID()
                 to_lane_id = conn.getToLane().getID()
                 via_lane_id = conn.getViaLaneID()
-
                 from_road_id = conn.getFrom().getID()  # Link roads
                 to_road_id = conn.getTo().getID()
                 if via_lane_id == '':  # Maybe we could skip this, but not sure
@@ -336,7 +336,10 @@ def extract_map_features(graph):
                     SD.POLYGON: boundary_polygon,
                     # Заглушки — заполним ниже
                     "entry_lanes": [],
+                    "turns": [],
                     "exit_lanes": [],
+                    "left_lanes": [],
+                    "right_lanes": [],
                 }
             elif lane.type == 'sidewalk':
                 ret[id] = {
@@ -354,6 +357,25 @@ def extract_map_features(graph):
                     SD.TYPE: MetaDriveType.CROSSWALK,
                     SD.POLYGON: boundary_polygon,
                 }
+                
+                
+    for road_id, road in graph.roads.items():
+        for lane in road.lanes:
+            if lane.type != 'driving':
+                continue
+            lane_id = f"lane_{lane.name}"
+            if lane_id not in ret:
+                continue
+
+            left_lanes = []
+            right_lanes = []
+            if lane.left_neigh and lane.left_neigh.type == 'driving':
+                left_lanes.append(f"lane_{lane.left_neigh.name}")
+            if lane.right_neigh and lane.right_neigh.type == 'driving':
+                right_lanes.append(f"lane_{lane.right_neigh.name}")
+
+            ret[lane_id]["left_lanes"] = left_lanes
+            ret[lane_id]["right_lanes"] = right_lanes
                 
     for lane_name, lane_node in graph.lanes.items():
         lane_id = "lane_{}".format(lane_name)
@@ -373,6 +395,33 @@ def extract_map_features(graph):
             if in_id in ret:
                 entry_ids.append(in_id)
         ret[lane_id]["entry_lanes"] = entry_ids
+        
+    for lane_name, lane_node in graph.lanes.items():
+        base_lane_id = f"lane_{lane_name}"
+        if base_lane_id not in ret or lane_node.type != 'driving':
+            continue
+
+        turns = []
+        for out_lane in lane_node.outgoing:
+            direction = None
+            for conn in lane_node.sumolib_obj.getOutgoing():
+                if conn.getToLane() == out_lane.sumolib_obj or conn.getViaLaneID() == out_lane.name:
+                    direction = conn.getDirection()
+                    if direction in ('s', 'l', 'r', 't'):
+                        break
+            
+            if direction is None:
+                continue 
+
+            to_lane_id = f"lane_{out_lane.name}"
+            if to_lane_id in ret:  # только если целевая полоса сохранена
+                turns.append({
+                    "direction": direction,
+                    "to_lane": to_lane_id
+                })
+
+        if turns:
+            ret[base_lane_id]["turns"] = turns
 
     for lane_divider_id, lane_divider in enumerate(graph.lane_dividers):
         id = "lane_divider_{}".format(lane_divider_id)

@@ -20,6 +20,65 @@ pygame = import_pygame()
 
 color_white = (255, 255, 255)
 
+import math
+
+
+def draw_turn_sign(surface, start_pos, directions, color=(255, 255, 255), bg_color=(0, 0, 255, 128), sign_size=18, first=True):
+    
+    if not directions:
+        return
+    if first:
+        half = sign_size // 2
+        rect = pygame.Rect(start_pos[0] - half, start_pos[1] - half, sign_size + 4, sign_size + 4)
+
+        s = pygame.Surface((sign_size, sign_size), pygame.SRCALPHA)
+        s.fill(bg_color)
+        surface.blit(s, (start_pos[0] - half, start_pos[1] - half))
+
+    center_local = (0, 0)
+    arrow_length = sign_size * 0.5
+    arrow_size = sign_size * 0.15
+
+    local_angle_map = {
+        's': -math.pi / 2,
+        'r': 0,
+        'l': math.pi,
+        't': math.pi / 2,
+    }
+
+    if set(directions) == {'s', 'r'}:
+        offsets = {'s': (-3, 0), 'r': (3, 0)}
+    elif set(directions) == {'s', 'l'}:
+        offsets = {'s': (3, 0), 'l': (-3, 0)}
+    elif set(directions) == {'l', 's', 'r'}:
+        offsets = {'l': (-6, 0), 's': (0, 0), 'r': (6, 0)}
+    else:
+        offsets = {d: (0, 0) for d in directions}
+
+    for d in directions:
+        if d not in local_angle_map:
+            continue
+        angle = local_angle_map[d]
+        dx = arrow_length * math.cos(angle)
+        dy = arrow_length * math.sin(angle)
+
+        ox, oy = offsets.get(d, (0, 0))
+        sp = (start_pos[0] + ox, start_pos[1] + oy)
+        ep = (sp[0] + dx, sp[1] + dy)
+
+        pygame.draw.line(surface, color, sp, ep, 4)
+
+        arrow_tip_angle = math.pi / 6
+        left_tip = (
+            ep[0] + arrow_size * math.cos(angle + math.pi - arrow_tip_angle),
+            ep[1] + arrow_size * math.sin(angle + math.pi - arrow_tip_angle)
+        )
+        right_tip = (
+            ep[0] + arrow_size * math.cos(angle + math.pi + arrow_tip_angle),
+            ep[1] + arrow_size * math.sin(angle + math.pi + arrow_tip_angle)
+        )
+        pygame.draw.line(surface, color, ep, left_tip, 4)
+        pygame.draw.line(surface, color, ep, right_tip, 4)
 
 def draw_top_down_map_native(
     map,
@@ -574,7 +633,15 @@ class TopDownRenderer:
             for sign in sign_mgr.signs:
                 sign_type = type(sign).__name__
                 icon = self.sign_icon_surfaces.get(sign_type)
-                if icon is not None and hasattr(sign, 'position'):
+                if sign_type == "DirectionSign":
+                    dir_order = {'l': 0, 's': 1, 'r': 2, 't': 3}
+                    sorted_dirs = sorted(sign.lane.turns, key=lambda d: dir_order.get(d["direction"], 99))
+                    screen_end = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
+                    first = True
+                    for d in sorted_dirs:
+                        draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
+                        first = False
+                elif icon is not None and hasattr(sign, 'position'):
                     pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
                     rect = icon.get_rect(center=(pixel_x, pixel_y))
                     self._frame_canvas.blit(icon, rect)

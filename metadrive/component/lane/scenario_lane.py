@@ -52,6 +52,7 @@ class ScenarioLane(PointLane):
         self.exit_lanes = map_data[lane_id].get(ScenarioDescription.EXIT, None)
         self.left_lanes = map_data[lane_id].get(ScenarioDescription.LEFT_NEIGHBORS, None)
         self.right_lanes = map_data[lane_id].get(ScenarioDescription.RIGHT_NEIGHBORS, None)
+        self.turns = map_data[lane_id].get(ScenarioDescription.TURNS, None)
 
     @staticmethod
     def try_get_polygon(map_data, lane_id):
@@ -133,6 +134,7 @@ class ScenarioLane(PointLane):
         self.exit_lanes = None
         self.left_lanes = None
         self.right_lanes = None
+        self.turns = None
         super(ScenarioLane, self).destroy()
 
 

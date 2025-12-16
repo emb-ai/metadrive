@@ -8,7 +8,7 @@ from metadrive.scenario.scenario_description import ScenarioDescription as SD
 from metadrive.utils.math import get_boxes_bounding_box
 from metadrive.utils.pg.utils import get_lanes_bounding_box
 
-lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes"])
+lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes", "turns"])
 
 
 class EdgeRoadNetwork(BaseRoadNetwork):
@@ -27,7 +27,8 @@ class EdgeRoadNetwork(BaseRoadNetwork):
             entry_lanes=lane.entry_lanes or [],
             exit_lanes=lane.exit_lanes or [],
             left_lanes=lane.left_lanes or [],
-            right_lanes=lane.right_lanes or []
+            right_lanes=lane.right_lanes or [],
+            turns=lane.turns or []
         )
         
     def find_rightmost_lane_by_road_id(self, original_road_id):
@@ -95,6 +96,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
         :param goal: goal edge
         :return: list of paths from start to goal.
         """
+        
         lanes = self.graph[start].left_lanes + self.graph[start].right_lanes + [start]
 
         queue = [(lane, [lane]) for lane in lanes]
@@ -119,9 +121,9 @@ class EdgeRoadNetwork(BaseRoadNetwork):
         info: lane_info = self.graph[lane_index]
         ret = [self.graph[lane_index].lane]
         for left_n in info.left_lanes:
-            ret.append(self.graph[left_n["id"]].lane)
+            ret.append(self.graph[left_n].lane)
         for right_n in info.right_lanes:
-            ret.append(self.graph[right_n["id"]].lane)
+            ret.append(self.graph[right_n].lane)
         return ret
 
     def destroy(self):
@@ -153,6 +155,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 SD.EXIT: lane_info.exit_lanes,
                 SD.LEFT_NEIGHBORS: lane_info.left_lanes,
                 SD.RIGHT_NEIGHBORS: lane_info.right_lanes,
+                SD.TURNS: lane_info.turns,
                 "speed_limit_kmh": lane_info.lane.speed_limit
             }
         return ret
