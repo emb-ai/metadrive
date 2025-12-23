@@ -53,6 +53,7 @@ class ScenarioLane(PointLane):
         self.left_lanes = map_data[lane_id].get(ScenarioDescription.LEFT_NEIGHBORS, None)
         self.right_lanes = map_data[lane_id].get(ScenarioDescription.RIGHT_NEIGHBORS, None)
         self.turns = map_data[lane_id].get(ScenarioDescription.TURNS, None)
+        self.speed = map_data[lane_id].get(ScenarioDescription.SPEED, None)
 
     @staticmethod
     def try_get_polygon(map_data, lane_id):
@@ -135,6 +136,7 @@ class ScenarioLane(PointLane):
         self.left_lanes = None
         self.right_lanes = None
         self.turns = None
+        self.speed = None 
         super(ScenarioLane, self).destroy()
 
 

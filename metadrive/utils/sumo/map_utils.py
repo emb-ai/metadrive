@@ -98,7 +98,7 @@ class LaneNode:
             self.type = 'driving'
         self.width: float = sumolib_obj.getWidth()
         self.length: float = sumolib_obj.getLength()
-
+        self.speed: float = sumolib_obj.getSpeed()
         self.shape: LaneShape = LaneShape(sumolib_obj, self.width)
 
         if sumolib_obj.getEdge().getFunction() == 'walkingarea':
@@ -334,6 +334,7 @@ def extract_map_features(graph):
                     SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
                     SD.POLYLINE: lane.sumolib_obj.getShape(),
                     SD.POLYGON: boundary_polygon,
+                    "speed": lane.speed,
                     # Заглушки — заполним ниже
                     "entry_lanes": [],
                     "turns": [],
