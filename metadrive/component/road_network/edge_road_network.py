@@ -8,7 +8,7 @@ from metadrive.scenario.scenario_description import ScenarioDescription as SD
 from metadrive.utils.math import get_boxes_bounding_box
 from metadrive.utils.pg.utils import get_lanes_bounding_box
 
-lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes", "turns", "speed"])
+lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes", "turns", "speed", "width"])
 
 
 class EdgeRoadNetwork(BaseRoadNetwork):
@@ -29,7 +29,8 @@ class EdgeRoadNetwork(BaseRoadNetwork):
             left_lanes=lane.left_lanes or [],
             right_lanes=lane.right_lanes or [],
             turns=lane.turns or [],
-            speed=lane.speed or []
+            speed=lane.speed or [],
+            width=lane.width or []
         )
         
     def find_rightmost_lane_by_road_id(self, original_road_id):
@@ -50,8 +51,10 @@ class EdgeRoadNetwork(BaseRoadNetwork):
             except (ValueError, IndexError):
                 continue
 
-            if edge_id == target or edge_id == f"-{target}":
+            if edge_id == target:
                 candidates.append((lane_key, lane_index))
+            elif edge_id == f"-{target}":
+                candidates.append((lane_key, -lane_index))
 
         if not candidates:
             return None
@@ -98,7 +101,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
         :return: list of paths from start to goal.
         """
         
-        lanes = self.graph[start].left_lanes + self.graph[start].right_lanes + [start]
+        lanes = [start]
 
         queue = [(lane, [lane]) for lane in lanes]
         while queue:
@@ -111,7 +114,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 if _next in path:
                     # circle
                     continue
-                if goal is None and len(path) > 3:
+                if goal is None and len(path) > 1:
                     yield path + [_next]
                 if _next == goal:
                     yield path + [_next]
@@ -154,6 +157,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 SD.TYPE: lane_info.lane.metadrive_type,
                 SD.ENTRY: lane_info.entry_lanes,
                 SD.EXIT: lane_info.exit_lanes,
+                SD.WIDTH: lane_info.width,
                 SD.LEFT_NEIGHBORS: lane_info.left_lanes,
                 SD.RIGHT_NEIGHBORS: lane_info.right_lanes,
                 SD.TURNS: lane_info.turns,

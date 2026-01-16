@@ -137,6 +137,7 @@ class ScenarioDescription(dict):
     # lane keys
     POLYLINE = "polyline"
     POLYGON = "polygon"
+    WIDTH = "width"
     LEFT_BOUNDARIES = "left_boundaries"
     RIGHT_BOUNDARIES = "right_boundaries"
     LEFT_NEIGHBORS = "left_lanes"

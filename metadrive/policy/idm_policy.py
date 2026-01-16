@@ -300,9 +300,49 @@ class IDMPolicy(BasePolicy):
         steering = self.heading_pid.get_result(-wrap_to_pi(lane_heading - v_heading))
         steering += self.lateral_pid.get_result(-lat)
         return float(steering)
+    
+    def get_curvature_based_speed_limit(self, lane, longitudinal: float, base_speed: float) -> float:
+        """
+        Compute a safe speed based on road curvature.
+        Uses the formula: v_max = sqrt(μ * g * R), but approximated via heading change.
+        """
+        if not hasattr(lane, "heading_theta_at"):
+            return base_speed
+
+        # Look ahead a short distance to estimate curvature
+        look_ahead = 5.0  # meters
+        current_heading = lane.heading_theta_at(longitudinal)
+        future_heading = lane.heading_theta_at(min(longitudinal + look_ahead, lane.length))
+        delta_heading = abs(wrap_to_pi(future_heading - current_heading))  # radians
+
+        # If heading doesn't change → straight road → full speed
+        if delta_heading < 0.01:
+            return base_speed
+
+        # Approximate turning radius: R ≈ look_ahead / delta_heading
+        turning_radius = look_ahead / max(delta_heading, 0.01)
+
+        # Safe speed: v = sqrt(mu * g * R)
+        # Assume mu = 0.7 (dry asphalt), g = 9.81 m/s^2
+        mu = 0.01
+        g = 9.81
+        safe_speed = np.sqrt(mu * g * turning_radius)  # m/s
+
+        # Convert base_speed from km/h to m/s for comparison
+        base_speed_mps = base_speed / 3.6
+
+        # Return the lower of the two (but not below creep speed)
+        return min(base_speed_mps, safe_speed) * 3.6  # back to km/h
 
     def acceleration(self, front_obj, dist_to_front) -> float:
         ego_vehicle = self.control_object
+        if self.routing_target_lane:
+            base_speed = self.routing_target_lane.speed * 3.6  #车道限速
+            long, _ = self.routing_target_lane.local_coordinates(self.control_object.position)
+            curvature_speed = self.get_curvature_based_speed_limit(self.routing_target_lane, long, base_speed)
+            self.target_speed = min(base_speed, curvature_speed)
+        else:
+            self.target_speed = self.NORMAL_SPEED
         ego_target_speed = not_zero(self.target_speed, 0)
         acceleration = self.ACC_FACTOR * (1 - np.power(max(ego_vehicle.speed_km_h, 0) / ego_target_speed, self.DELTA))
         if front_obj and (not self.disable_idm_deceleration):
@@ -340,6 +380,8 @@ class IDMPolicy(BasePolicy):
         def lane_follow():
             # fall back to lane follow
             self.target_speed = self.NORMAL_SPEED
+            if self.routing_target_lane:
+                self.target_speed = round(self.routing_target_lane.speed * 3.6)
             self.overtake_timer += 1
             return surrounding_objects.front_object(), surrounding_objects.front_min_distance(
             ), self.routing_target_lane
@@ -369,6 +411,8 @@ class IDMPolicy(BasePolicy):
                     else:
                         # it is time to change lane!
                         self.target_speed = self.NORMAL_SPEED
+                        if self.routing_target_lane:
+                            self.target_speed = self.routing_target_lane.speed * 3.6
                         return surrounding_objects.left_front_object(), surrounding_objects.left_front_min_distance(), \
                                current_lanes[self.routing_target_lane.index[-1] - 1]
                 else:
@@ -382,6 +426,8 @@ class IDMPolicy(BasePolicy):
                     else:
                         # change lane
                         self.target_speed = self.NORMAL_SPEED
+                        if self.routing_target_lane:
+                            self.target_speed = self.routing_target_lane.speed * 3.6
                         return surrounding_objects.right_front_object(), surrounding_objects.right_front_min_distance(), \
                                current_lanes[self.routing_target_lane.index[-1] + 1]
 

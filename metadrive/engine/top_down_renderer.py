@@ -627,6 +627,33 @@ class TopDownRenderer:
                 radius=6,
                 width=2
             )
+        if (self.current_track_agent is not None and
+            hasattr(self.current_track_agent, 'navigation') and
+            hasattr(self.current_track_agent.navigation, 'checkpoints')):
+
+            checkpoints = self.current_track_agent.navigation.checkpoints
+            route_color = (0, 255, 0)
+            route_width = 3
+            map_data = self.map.blocks[-1].map_data
+            route_points = []
+
+            for lane_id in checkpoints:
+                if lane_id in map_data and "polyline" in map_data[lane_id]:
+                    lane = self.map.road_network.get_lane(lane_id)
+                    dir_order = {'l': 0, 's': 1, 'r': 2, 't': 3}
+                    sorted_dirs = sorted(lane.turns, key=lambda d: dir_order.get(d["direction"], 99))
+                    pos = lane.position(lane.length, lane.width)
+                    screen_end = self._frame_canvas.pos2pix(pos[0], pos[1])
+                    first = True
+                    for d in sorted_dirs:
+                        draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
+                        first = False
+                    route_points.extend(map_data[lane_id]["polyline"])
+            if len(route_points) > 1:
+                for i in range(len(route_points) - 1):
+                    start = self._frame_canvas.pos2pix(route_points[i][0], route_points[i][1])
+                    end = self._frame_canvas.pos2pix(route_points[i+1][0], route_points[i+1][1])
+                    pygame.draw.line(self._frame_canvas, route_color, start, end, route_width)            
             
         if hasattr(self.engine, 'traffic_sign_manager'):
             sign_mgr = self.engine.traffic_sign_manager

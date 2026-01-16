@@ -76,7 +76,7 @@ class BaseVehicle(BaseObject, BaseVehicleState):
     COLLISION_MASK = CollisionGroup.Vehicle
     PARAMETER_SPACE = ParameterSpace(VehicleParameterSpace.BASE_VEHICLE)
     MAX_LENGTH = 10
-    MAX_WIDTH = 2.5
+    MAX_WIDTH = 1.5
     MAX_STEERING = 60
     SEMANTIC_LABEL = Semantics.CAR.label
 

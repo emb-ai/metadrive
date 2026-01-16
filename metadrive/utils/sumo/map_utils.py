@@ -334,6 +334,7 @@ def extract_map_features(graph):
                     SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
                     SD.POLYLINE: lane.sumolib_obj.getShape(),
                     SD.POLYGON: boundary_polygon,
+                    SD.WIDTH: lane.width,
                     "speed": lane.speed,
                     # Заглушки — заполним ниже
                     "entry_lanes": [],

@@ -39,6 +39,7 @@ class PointLane(AbstractLane, InterpolatingLine):
         InterpolatingLine.__init__(self, center_line_points)
         self._bounding_box = get_points_bounding_box(center_line_points)
         self._polygon = polygon
+        # print("self.VIS_LANE_WIDTH", width, self.VIS_LANE_WIDTH)
         self.width = width if width else self.VIS_LANE_WIDTH
         if self._polygon is None and auto_generate_polygon:
             self._polygon = self.auto_generate_polygon()
