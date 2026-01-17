@@ -81,6 +81,28 @@ class TopDownMultiChannel(TopDownObservation):
         self.target_vehicle = vehicle
         self._should_draw_map = True
         self._should_fill_stack = True
+        
+    def draw_navigation_edge(self, canvas, color=(128, 128, 128)):
+        """
+        Draw navigation route for EdgeNetworkNavigation.
+        Uses self.checkpoints (list of lane indexes) to retrieve lane geometries.
+        """
+        if not hasattr(self.target_vehicle.navigation, 'checkpoints'):
+            return
+
+        checkpoints = self.target_vehicle.navigation.checkpoints
+        if len(checkpoints) < 2:
+            return
+
+        for i in range(len(checkpoints) - 1):
+            lane_index = checkpoints[i]
+            try:
+                lane = self.road_network.get_lane(lane_index)
+                # Отрисовка всей полосы как "навигационной зоны"
+                LaneGraphics.draw_drivable_area(lane, canvas, color=color)
+            except KeyError:
+                # Lane not found (e.g., invalid index)
+                continue
 
     def draw_map(self) -> pygame.Surface:
         """
@@ -118,8 +140,7 @@ class TopDownMultiChannel(TopDownObservation):
         if isinstance(self.target_vehicle.navigation, NodeNetworkNavigation):
             self.draw_navigation_node(self.canvas_background, (64, 64, 64))
         elif isinstance(self.target_vehicle.navigation, EdgeNetworkNavigation):
-            # TODO: draw edge network navigation
-            pass
+            self.draw_navigation_edge(self.canvas_background, (64, 64, 64)) 
         elif isinstance(self.target_vehicle.navigation, TrajectoryNavigation):
             self.draw_navigation_trajectory(self.canvas_background, (64, 64, 64))
 
