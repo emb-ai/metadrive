@@ -175,8 +175,7 @@ class FrontBackObjects:
                     find_front_in_current_lane[i] = True
 
         return cls(front_ret, back_ret, min_front_long, min_back_long)
-
-
+    
 class IDMPolicy(BasePolicy):
     """
     We implement this policy based on the HighwayEnv code base.
@@ -234,10 +233,6 @@ class IDMPolicy(BasePolicy):
         self.disable_idm_deceleration = self.engine.global_config.get("disable_idm_deceleration", False)
         self.heading_pid = PIDController(1.7, 0.01, 3.5)
         self.lateral_pid = PIDController(0.3, .002, 0.05)
-        self.waiting_at_stop_sign = False
-        self.stop_sign_wait_time = 0.0
-        self.stop_sign_total_wait = 1.0
-        self.has_stopped_at_stop_sign = False 
 
     def act(self, *args, **kwargs):
         # concat lane
@@ -306,6 +301,150 @@ class IDMPolicy(BasePolicy):
         steering = self.heading_pid.get_result(-wrap_to_pi(lane_heading - v_heading))
         steering += self.lateral_pid.get_result(-lat)
         return float(steering)
+
+    def acceleration(self, front_obj, dist_to_front) -> float:
+        ego_vehicle = self.control_object
+        ego_target_speed = not_zero(self.target_speed, 0)
+        acceleration = self.ACC_FACTOR * (1 - np.power(max(ego_vehicle.speed_km_h, 0) / ego_target_speed, self.DELTA))
+        if front_obj and (not self.disable_idm_deceleration):
+            d = dist_to_front
+            speed_diff = self.desired_gap(ego_vehicle, front_obj) / not_zero(d)
+            acceleration -= self.ACC_FACTOR * (speed_diff**2)
+        return acceleration
+
+    def desired_gap(self, ego_vehicle, front_obj, projected: bool = True) -> float:
+        d0 = self.DISTANCE_WANTED
+        tau = self.TIME_WANTED
+        ab = -self.ACC_FACTOR * self.DEACC_FACTOR
+        dv = np.dot(ego_vehicle.velocity_km_h - front_obj.velocity_km_h, ego_vehicle.heading) if projected \
+            else ego_vehicle.speed_km_h - front_obj.speed_km_h
+        d_star = d0 + ego_vehicle.speed_km_h * tau + ego_vehicle.speed_km_h * dv / (2 * np.sqrt(ab))
+        return d_star
+
+    def reset(self):
+        self.heading_pid.reset()
+        self.lateral_pid.reset()
+        self.target_speed = self.NORMAL_SPEED
+        self.routing_target_lane = None
+        self.available_routing_index_range = None
+        self.overtake_timer = self.np_random.randint(0, self.LANE_CHANGE_FREQ)
+
+    def lane_change_policy(self, all_objects):
+        current_lanes = self.control_object.navigation.current_ref_lanes
+        surrounding_objects = FrontBackObjects.get_find_front_back_objs(
+            all_objects, self.routing_target_lane, self.control_object.position, self.MAX_LONG_DIST, current_lanes
+        )
+        self.available_routing_index_range = [i for i in range(len(current_lanes))]
+        next_lanes = self.control_object.navigation.next_ref_lanes
+        lane_num_diff = len(current_lanes) - len(next_lanes) if next_lanes is not None else 0
+
+        def lane_follow():
+            # fall back to lane follow
+            self.target_speed = self.NORMAL_SPEED
+            self.overtake_timer += 1
+            return surrounding_objects.front_object(), surrounding_objects.front_min_distance(
+            ), self.routing_target_lane
+
+        if isinstance(surrounding_objects.front_object(), BaseTrafficLight):
+            # traffic light, go lane follow
+            return lane_follow()
+
+        # We have to perform lane changing because the number of lanes in next road is less than current road
+        if lane_num_diff > 0:
+            # lane num decreasing happened in left road or right road
+            if current_lanes[0].is_previous_lane_of(next_lanes[0]):
+                index_range = [i for i in range(len(next_lanes))]
+            else:
+                index_range = [i for i in range(lane_num_diff, len(current_lanes))]
+            self.available_routing_index_range = index_range
+            if self.routing_target_lane.index[-1] not in index_range:
+                # not on suitable lane do lane change !!!
+                if self.routing_target_lane.index[-1] > index_range[-1]:
+                    # change to left
+                    if surrounding_objects.left_back_min_distance(
+                    ) < self.SAFE_LANE_CHANGE_DISTANCE or surrounding_objects.left_front_min_distance() < 5:
+                        # creep to wait
+                        self.target_speed = self.CREEP_SPEED
+                        return surrounding_objects.front_object(), surrounding_objects.front_min_distance(
+                        ), self.routing_target_lane
+                    else:
+                        # it is time to change lane!
+                        self.target_speed = self.NORMAL_SPEED
+                        return surrounding_objects.left_front_object(), surrounding_objects.left_front_min_distance(), \
+                               current_lanes[self.routing_target_lane.index[-1] - 1]
+                else:
+                    # change to right
+                    if surrounding_objects.right_back_min_distance(
+                    ) < self.SAFE_LANE_CHANGE_DISTANCE or surrounding_objects.right_front_min_distance() < 5:
+                        # unsafe, creep and wait
+                        self.target_speed = self.CREEP_SPEED
+                        return surrounding_objects.front_object(), surrounding_objects.front_min_distance(
+                        ), self.routing_target_lane,
+                    else:
+                        # change lane
+                        self.target_speed = self.NORMAL_SPEED
+                        return surrounding_objects.right_front_object(), surrounding_objects.right_front_min_distance(), \
+                               current_lanes[self.routing_target_lane.index[-1] + 1]
+
+        # lane follow or active change lane/overtake for high driving speed
+        if abs(self.control_object.speed_km_h - self.NORMAL_SPEED) > 3 and surrounding_objects.has_front_object(
+        ) and abs(surrounding_objects.front_object().speed_km_h -
+                  self.NORMAL_SPEED) > 3 and self.overtake_timer > self.LANE_CHANGE_FREQ:
+            # may lane change
+            right_front_speed = surrounding_objects.right_front_object().speed_km_h if surrounding_objects.has_right_front_object() else self.MAX_SPEED \
+                if surrounding_objects.right_lane_exist() and surrounding_objects.right_front_min_distance() > self.SAFE_LANE_CHANGE_DISTANCE and surrounding_objects.right_back_min_distance() > self.SAFE_LANE_CHANGE_DISTANCE else None
+            front_speed = surrounding_objects.front_object().speed_km_h if surrounding_objects.has_front_object(
+            ) else self.MAX_SPEED
+            left_front_speed = surrounding_objects.left_front_object().speed_km_h if surrounding_objects.has_left_front_object() else self.MAX_SPEED \
+                if surrounding_objects.left_lane_exist() and surrounding_objects.left_front_min_distance() > self.SAFE_LANE_CHANGE_DISTANCE and surrounding_objects.left_back_min_distance() > self.SAFE_LANE_CHANGE_DISTANCE else None
+            if left_front_speed is not None and left_front_speed - front_speed > self.LANE_CHANGE_SPEED_INCREASE:
+                # left overtake has a high priority
+                expect_lane_idx = current_lanes.index(self.routing_target_lane) - 1
+                if expect_lane_idx in self.available_routing_index_range:
+                    return surrounding_objects.left_front_object(), surrounding_objects.left_front_min_distance(), \
+                           current_lanes[expect_lane_idx]
+            if right_front_speed is not None and right_front_speed - front_speed > self.LANE_CHANGE_SPEED_INCREASE:
+                expect_lane_idx = current_lanes.index(self.routing_target_lane) + 1
+                if expect_lane_idx in self.available_routing_index_range:
+                    return surrounding_objects.right_front_object(), surrounding_objects.right_front_min_distance(), \
+                           current_lanes[expect_lane_idx]
+
+        # fall back to lane follow
+        return lane_follow()
+
+
+class ModifiedIDMPolicy(IDMPolicy):
+    def __init__(self, control_object, random_seed):
+        super(IDMPolicy, self).__init__(control_object=control_object, random_seed=random_seed)
+        self.target_speed = self.NORMAL_SPEED
+        self.routing_target_lane = None
+        self.available_routing_index_range = None
+        self.overtake_timer = self.np_random.randint(0, self.LANE_CHANGE_FREQ)
+        self.enable_lane_change = self.engine.global_config.get("enable_idm_lane_change", True)
+        self.disable_idm_deceleration = self.engine.global_config.get("disable_idm_deceleration", False)
+        self.heading_pid = PIDController(1.7, 0.01, 3.5)
+        self.lateral_pid = PIDController(0.3, .002, 0.05)
+        self.waiting_at_stop_sign = False
+        self.stop_sign_wait_time = 0.0
+        self.stop_sign_total_wait = 1.0
+        self.has_stopped_at_stop_sign = False 
+    
+    def _find_relevant_stop_sign(self):
+        """
+        Find a stop sign that is on the current lane or next lane in the route.
+        """
+        if not hasattr(self.engine, 'traffic_sign_manager'):
+            return None
+
+        signs = self.engine.traffic_sign_manager.signs
+        for sign in signs:
+            if not isinstance(sign, StopSign):
+                continue
+
+            # Проверяем, находится ли знак на текущей или следующей полосе маршрута
+            if sign.lane in self.control_object.navigation.current_ref_lanes:
+                return sign
+        return None
     
     def get_curvature_based_speed_limit(self, lane, longitudinal: float, base_speed: float) -> float:
         """
@@ -339,23 +478,6 @@ class IDMPolicy(BasePolicy):
 
         # Return the lower of the two (but not below creep speed)
         return min(base_speed_mps, safe_speed) * 3.6  # back to km/h
-    
-    def _find_relevant_stop_sign(self):
-        """
-        Find a stop sign that is on the current lane or next lane in the route.
-        """
-        if not hasattr(self.engine, 'traffic_sign_manager'):
-            return None
-
-        signs = self.engine.traffic_sign_manager.signs
-        for sign in signs:
-            if not isinstance(sign, StopSign):
-                continue
-
-            # Проверяем, находится ли знак на текущей или следующей полосе маршрута
-            if sign.lane in self.control_object.navigation.current_ref_lanes:
-                return sign
-        return None
 
     def acceleration(self, front_obj, dist_to_front) -> float:
         ego_vehicle = self.control_object
@@ -403,24 +525,7 @@ class IDMPolicy(BasePolicy):
             speed_diff = self.desired_gap(ego_vehicle, front_obj) / not_zero(d)
             acceleration -= self.ACC_FACTOR * (speed_diff**2)
         return acceleration
-
-    def desired_gap(self, ego_vehicle, front_obj, projected: bool = True) -> float:
-        d0 = self.DISTANCE_WANTED
-        tau = self.TIME_WANTED
-        ab = -self.ACC_FACTOR * self.DEACC_FACTOR
-        dv = np.dot(ego_vehicle.velocity_km_h - front_obj.velocity_km_h, ego_vehicle.heading) if projected \
-            else ego_vehicle.speed_km_h - front_obj.speed_km_h
-        d_star = d0 + ego_vehicle.speed_km_h * tau + ego_vehicle.speed_km_h * dv / (2 * np.sqrt(ab))
-        return d_star
-
-    def reset(self):
-        self.heading_pid.reset()
-        self.lateral_pid.reset()
-        self.target_speed = self.NORMAL_SPEED
-        self.routing_target_lane = None
-        self.available_routing_index_range = None
-        self.overtake_timer = self.np_random.randint(0, self.LANE_CHANGE_FREQ)
-
+    
     def lane_change_policy(self, all_objects):
         current_lanes = self.control_object.navigation.current_ref_lanes
         surrounding_objects = FrontBackObjects.get_find_front_back_objs(
