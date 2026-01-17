@@ -7,6 +7,7 @@ from metadrive.component.road_network.base_road_network import LaneIndex
 from metadrive.scenario.scenario_description import ScenarioDescription as SD
 from metadrive.utils.math import get_boxes_bounding_box
 from metadrive.utils.pg.utils import get_lanes_bounding_box
+from metadrive.utils import get_np_random
 
 lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes", "turns", "speed", "width"])
 
@@ -57,7 +58,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 candidates.append((lane_key, -lane_index))
 
         if not candidates:
-            return None
+            return get_np_random().choice(list(self.graph.keys()))
 
         rightmost = max(candidates, key=lambda x: x[1])
         return rightmost[0]

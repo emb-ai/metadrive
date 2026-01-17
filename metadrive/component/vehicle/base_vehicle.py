@@ -366,7 +366,7 @@ class BaseVehicle(BaseObject, BaseVehicleState):
             self.set_position(position[:2], height=position[-1])
         else:
             raise ValueError()
-        self.reset_navigation()
+        self.reset_navigation(lane)
         self.body.clearForces()
         self.body.setLinearVelocity(Vec3(0, 0, 0))
         self.body.setAngularVelocity(Vec3(0, 0, 0))
@@ -739,7 +739,7 @@ class BaseVehicle(BaseObject, BaseVehicleState):
             vehicle_config=self.config
         )
 
-    def reset_navigation(self):
+    def reset_navigation(self, lane):
         """
         Update map information that are used by this vehicle, after reset()
         This function will query the map about the spawn position and destination of current vehicle,
@@ -749,7 +749,7 @@ class BaseVehicle(BaseObject, BaseVehicleState):
         select one lane based on the localization results.
         """
         if self.navigation is not None and self.config["navigation_module"]:
-            self.navigation.reset(self)
+            self.navigation.reset(self, vehicle_lane=lane)
             self.navigation.update_localization(self)
 
     def _state_check(self):

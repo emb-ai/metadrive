@@ -32,7 +32,7 @@ class EdgeNetworkNavigation(BaseNavigation):
             vehicle_config=vehicle_config
         )
 
-    def reset(self, vehicle):
+    def reset(self, vehicle, vehicle_lane):
         possible_lanes = ray_localization(vehicle.heading, vehicle.spawn_place, self.engine, use_heading_filter=False)
         possible_lane_indexes = [lane_index for lane, lane_index, dist in possible_lanes]
 
@@ -45,8 +45,10 @@ class EdgeNetworkNavigation(BaseNavigation):
             idx = possible_lane_indexes.index(vehicle.config["spawn_lane_index"])
             lane, new_l_index = possible_lanes[idx][:-1]
         else:
-            assert len(possible_lanes) > 0
-            lane, new_l_index = possible_lanes[0][:-1]
+            if len(possible_lanes) == 0:
+                lane = vehicle_lane
+            else:
+                lane = vehicle_lane
 
         dest = vehicle.config["destination"]
         current_lane = lane

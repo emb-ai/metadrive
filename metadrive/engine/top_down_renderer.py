@@ -642,7 +642,7 @@ class TopDownRenderer:
                     lane = self.map.road_network.get_lane(lane_id)
                     dir_order = {'l': 0, 's': 1, 'r': 2, 't': 3}
                     sorted_dirs = sorted(lane.turns, key=lambda d: dir_order.get(d["direction"], 99))
-                    pos = lane.position(lane.length, lane.width)
+                    pos = lane.position(lane.length, lane.width*2)
                     screen_end = self._frame_canvas.pos2pix(pos[0], pos[1])
                     first = True
                     for d in sorted_dirs:

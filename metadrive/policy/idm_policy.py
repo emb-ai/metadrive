@@ -7,6 +7,8 @@ from metadrive.policy.manual_control_policy import ManualControlPolicy
 from metadrive.utils.math import not_zero, wrap_to_pi, norm
 import logging
 
+from traffic_signs.stop_sign import StopSign
+
 
 class FrontBackObjects:
     def __init__(self, front_ret, back_ret, front_dist, back_dist):
@@ -232,6 +234,10 @@ class IDMPolicy(BasePolicy):
         self.disable_idm_deceleration = self.engine.global_config.get("disable_idm_deceleration", False)
         self.heading_pid = PIDController(1.7, 0.01, 3.5)
         self.lateral_pid = PIDController(0.3, .002, 0.05)
+        self.waiting_at_stop_sign = False
+        self.stop_sign_wait_time = 0.0
+        self.stop_sign_total_wait = 1.0
+        self.has_stopped_at_stop_sign = False 
 
     def act(self, *args, **kwargs):
         # concat lane
@@ -333,6 +339,23 @@ class IDMPolicy(BasePolicy):
 
         # Return the lower of the two (but not below creep speed)
         return min(base_speed_mps, safe_speed) * 3.6  # back to km/h
+    
+    def _find_relevant_stop_sign(self):
+        """
+        Find a stop sign that is on the current lane or next lane in the route.
+        """
+        if not hasattr(self.engine, 'traffic_sign_manager'):
+            return None
+
+        signs = self.engine.traffic_sign_manager.signs
+        for sign in signs:
+            if not isinstance(sign, StopSign):
+                continue
+
+            # Проверяем, находится ли знак на текущей или следующей полосе маршрута
+            if sign.lane in self.control_object.navigation.current_ref_lanes:
+                return sign
+        return None
 
     def acceleration(self, front_obj, dist_to_front) -> float:
         ego_vehicle = self.control_object
@@ -343,6 +366,36 @@ class IDMPolicy(BasePolicy):
             self.target_speed = min(base_speed, curvature_speed)
         else:
             self.target_speed = self.NORMAL_SPEED
+            
+        stop_sign = self._find_relevant_stop_sign()
+        
+        if stop_sign is not None:
+            veh_long = stop_sign.lane.local_coordinates(self.control_object.position)[0]
+            sign_long = stop_sign.placement_long
+
+            if veh_long < sign_long and (sign_long - veh_long) < 8.0:
+                if not self.has_stopped_at_stop_sign:
+                    if not self.waiting_at_stop_sign:
+                        if self.control_object.speed < 0.1:
+                            self.waiting_at_stop_sign = True
+                            self.stop_sign_wait_time = 0.0
+                        else:
+                            self.target_speed = 0.001
+                    else:
+                        dt = self.engine.global_config["physics_world_step_size"]
+                        self.stop_sign_wait_time += dt
+                        self.target_speed = 0.001
+
+                        if self.stop_sign_wait_time >= self.stop_sign_total_wait:
+                            self.waiting_at_stop_sign = False
+                            self.stop_sign_wait_time = 0.0
+                            self.has_stopped_at_stop_sign = True
+            else:
+                self.waiting_at_stop_sign = False
+                self.stop_sign_wait_time = 0.0
+                self.has_stopped_at_stop_sign = False 
+
+    
         ego_target_speed = not_zero(self.target_speed, 0)
         acceleration = self.ACC_FACTOR * (1 - np.power(max(ego_vehicle.speed_km_h, 0) / ego_target_speed, self.DELTA))
         if front_obj and (not self.disable_idm_deceleration):

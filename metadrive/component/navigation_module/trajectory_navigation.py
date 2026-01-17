@@ -72,7 +72,7 @@ class TrajectoryNavigation(BaseNavigation):
         self.last_current_lat = deque([0.0, 0.0], maxlen=2)
         self.last_current_heading_theta_at_long = deque([0.0, 0.0], maxlen=2)
 
-    def reset(self, vehicle):
+    def reset(self, vehicle, vehicle_lane):
         super(TrajectoryNavigation, self).reset(current_lane=self.reference_trajectory)
         self.set_route()
 
