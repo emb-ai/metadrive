@@ -15,6 +15,7 @@ from metadrive.obs.top_down_obs_impl import WorldSurface, ObjectGraphics, LaneGr
 from metadrive.scenario.scenario_description import ScenarioDescription
 from metadrive.utils.utils import import_pygame
 from metadrive.utils.utils import is_map_related_instance
+from metadrive.component.navigation_module.edge_network_navigation import EdgeNetworkNavigation
 
 pygame = import_pygame()
 
@@ -627,7 +628,7 @@ class TopDownRenderer:
                 radius=6,
                 width=2
             )
-        if (self.current_track_agent is not None and
+        if (isinstance(self.current_track_agent.navigation, EdgeNetworkNavigation) and self.current_track_agent is not None and
             hasattr(self.current_track_agent, 'navigation') and
             hasattr(self.current_track_agent.navigation, 'checkpoints')):
 

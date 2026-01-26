@@ -318,6 +318,32 @@ class TopDownMultiChannel(TopDownObservation):
         for i in range(num):
             indices.append(length - 1 - i * frame_skip)
         return indices
+    
+    def destroy(self):
+        if hasattr(self, 'canvas_background'):
+            self.canvas_background = None
+        if hasattr(self, 'canvas_navigation'):
+            self.canvas_navigation = None
+        if hasattr(self, 'canvas_road_network'):
+            self.canvas_road_network = None
+        if hasattr(self, 'canvas_runtime'):
+            self.canvas_runtime = None
+        if hasattr(self, 'canvas_ego'):
+            self.canvas_ego = None
+        if hasattr(self, 'canvas_past_pos'):
+            self.canvas_past_pos = None
+        
+        if hasattr(self, 'stack_traffic_flow'):
+            self.stack_traffic_flow.clear()
+        if hasattr(self, 'stack_past_pos'):
+            self.stack_past_pos.clear()
+        
+        self.road_network = None
+        self.target_vehicle = None
+        self.obs_window = None
+        
+        if hasattr(super(), 'destroy'):
+            super().destroy()
 
     @property
     def observation_space(self):
