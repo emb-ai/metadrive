@@ -327,12 +327,13 @@ class LaneGraphics:
         :param surface: the pygame surface
         :param two_side: draw two sides of the lane, or only one side
         """
-        if MetaDriveType.is_yellow_line(type):
-            color = (255, 175, 35)
-        elif MetaDriveType.is_road_boundary_line(type):
-            color = (100, 100, 100)
-        else:
-            color = (175, 175, 175)
+        # if MetaDriveType.is_yellow_line(type):
+        #     color = (255, 175, 35)
+        # elif MetaDriveType.is_road_boundary_line(type):
+        #     color = (95, 95, 95)
+        # else:
+        #     color = (95, 95, 95)
+        color = surface.LANE_LINE_COLOR
         if MetaDriveType.is_road_line(type) or MetaDriveType.is_road_boundary_line(type):
             # if len(waymo_poly_line.segment_property) < 1:
             #     return
