@@ -414,6 +414,14 @@ class TopDownRenderer:
 
         # Record current target vehicle
         objects = self.engine.get_objects(lambda obj: not is_map_related_instance(obj))
+        
+        # Исключаем знаки из объектов перед добавлением в history_objects
+        if hasattr(self.engine, 'traffic_sign_manager'):
+            sign_mgr = self.engine.traffic_sign_manager
+            if sign_mgr and sign_mgr.signs:
+                sign_names = {sign.name for sign in sign_mgr.signs if sign is not None and hasattr(sign, 'name')}
+                objects = {name: obj for name, obj in objects.items() if name not in sign_names}
+        
         this_frame_objects = self._append_frame_objects(objects)
         self.history_objects.append(this_frame_objects)
 
@@ -500,6 +508,18 @@ class TopDownRenderer:
         """
         frame_objects = []
         for name, obj in objects.items():
+            # Пропускаем знаки - они отрисовываются отдельно через иконки
+            # Проверяем по имени класса или наличию icon_path
+            if obj is not None:
+                obj_class_name = type(obj).__name__
+                # Проверяем по имени класса знаков
+                if obj_class_name in ['StopSign', 'SpeedLimitSign', 'SpeedLimitSign20', 'SpeedLimitSign40', 
+                                      'SpeedLimitSign60', 'SpeedLimitSign30', 'NoStoppingAllowedSign', 'DirectionSign']:
+                    continue
+                # Также проверяем наличие icon_path - это признак знака
+                if hasattr(obj, 'icon_path') and obj.icon_path is not None:
+                    continue
+            
             frame_objects.append(
                 history_object(
                     name=name,
@@ -528,6 +548,20 @@ class TopDownRenderer:
             if self.history_smooth != 0 and (i % self.history_smooth != 0):
                 continue
             for v in objects:
+                # Пропускаем знаки - они отрисовываются отдельно через иконки
+                # Проверяем по типу объекта (TRAFFIC_OBJECT с icon_path) или по имени в traffic_sign_manager
+                if hasattr(self.engine, 'traffic_sign_manager'):
+                    sign_mgr = self.engine.traffic_sign_manager
+                    if sign_mgr:
+                        # Проверяем по имени
+                        if any(sign is not None and hasattr(sign, 'name') and sign.name == v.name for sign in sign_mgr.signs):
+                            continue
+                        # Проверяем по типу - знаки имеют тип TRAFFIC_OBJECT
+                        if v.type == MetaDriveType.TRAFFIC_OBJECT:
+                            # Дополнительная проверка: если это TRAFFIC_OBJECT, проверяем, не знак ли это
+                            # Знаки обычно имеют маленькие размеры (WIDTH < 1, LENGTH < 1)
+                            if hasattr(v, 'WIDTH') and hasattr(v, 'LENGTH') and v.WIDTH < 1.0 and v.LENGTH < 1.0:
+                                continue
                 c = v.color
                 h = v.heading_theta
                 h = h if abs(h) > 2 * np.pi / 180 else 0
@@ -565,6 +599,20 @@ class TopDownRenderer:
         # i = int(len(self.history_vehicles) / 2)
         i = -1
         for v in self.history_objects[i]:
+            # Пропускаем знаки - они отрисовываются отдельно через иконки
+            # Проверяем по типу объекта (TRAFFIC_OBJECT с icon_path) или по имени в traffic_sign_manager
+            if hasattr(self.engine, 'traffic_sign_manager'):
+                sign_mgr = self.engine.traffic_sign_manager
+                if sign_mgr:
+                    # Проверяем по имени
+                    if any(sign is not None and hasattr(sign, 'name') and sign.name == v.name for sign in sign_mgr.signs):
+                        continue
+                    # Проверяем по типу - знаки имеют тип TRAFFIC_OBJECT
+                    if v.type == MetaDriveType.TRAFFIC_OBJECT:
+                        # Дополнительная проверка: если это TRAFFIC_OBJECT, проверяем, не знак ли это
+                        # Знаки обычно имеют маленькие размеры (WIDTH < 1, LENGTH < 1)
+                        if hasattr(v, 'WIDTH') and hasattr(v, 'LENGTH') and v.WIDTH < 1.0 and v.LENGTH < 1.0:
+                            continue
             h = v.heading_theta
             c = v.color
             h = h if abs(h) > 2 * np.pi / 180 else 0
@@ -598,11 +646,43 @@ class TopDownRenderer:
                 )
                 self._deads.append(v)
                 
-        if not self.sign_icon_surfaces:
-            if  pygame.display.get_init():
-                for name, img in self.sign_icon_raw.items():
+        # Load sign icons dynamically if not already loaded
+        if hasattr(self.engine, 'traffic_sign_manager'):
+            sign_mgr = self.engine.traffic_sign_manager
+            for sign in sign_mgr.signs:
+                sign_type = type(sign).__name__
+                # Load icon if not already loaded
+                if sign_type not in self.sign_icon_raw and hasattr(sign, 'icon_path') and sign.icon_path:
+                    try:
+                        loaded_img = pygame.image.load(sign.icon_path)
+                        # Check if image is valid (not empty)
+                        if loaded_img.get_size()[0] > 0 and loaded_img.get_size()[1] > 0:
+                            self.sign_icon_raw[sign_type] = loaded_img
+                    except Exception as e:
+                        print(f"Failed to load icon for {sign_type} from {sign.icon_path}: {e}")
+        
+        # Create surfaces from raw icons if not already created
+        # Only create surfaces for icons that are not yet created
+        for name, img in self.sign_icon_raw.items():
+            if name not in self.sign_icon_surfaces:
+                try:
                     scaled = pygame.transform.smoothscale(img, (24, 24))
-                    self.sign_icon_surfaces[name] = scaled.convert_alpha()
+                    # Check if scaled image is valid
+                    if scaled.get_size()[0] > 0 and scaled.get_size()[1] > 0:
+                        # For images without alpha (like JPG), convert to surface with alpha
+                        # For PNG images, they should already have alpha
+                        try:
+                            # Try to preserve alpha if it exists
+                            if scaled.get_flags() & pygame.SRCALPHA:
+                                self.sign_icon_surfaces[name] = scaled
+                            else:
+                                # Convert to surface with alpha channel for JPG images
+                                self.sign_icon_surfaces[name] = scaled.convert_alpha()
+                        except Exception:
+                            # Fallback: use as-is
+                            self.sign_icon_surfaces[name] = scaled
+                except Exception as e:
+                    print(f"Failed to create surface for {name}: {e}")
                 
         if (self.current_track_agent is not None and
             hasattr(self.current_track_agent, 'navigation') and
@@ -659,20 +739,39 @@ class TopDownRenderer:
         if hasattr(self.engine, 'traffic_sign_manager'):
             sign_mgr = self.engine.traffic_sign_manager
             for sign in sign_mgr.signs:
+                if sign is None:
+                    continue
                 sign_type = type(sign).__name__
-                icon = self.sign_icon_surfaces.get(sign_type)
+                
+                # DirectionSign обрабатывается отдельно
                 if sign_type == "DirectionSign":
-                    dir_order = {'l': 0, 's': 1, 'r': 2, 't': 3}
-                    sorted_dirs = sorted(sign.lane.turns, key=lambda d: dir_order.get(d["direction"], 99))
-                    screen_end = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
-                    first = True
-                    for d in sorted_dirs:
-                        draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
-                        first = False
-                elif icon is not None and hasattr(sign, 'position'):
-                    pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
-                    rect = icon.get_rect(center=(pixel_x, pixel_y))
-                    self._frame_canvas.blit(icon, rect)
+                    if hasattr(sign, 'lane') and hasattr(sign.lane, 'turns'):
+                        dir_order = {'l': 0, 's': 1, 'r': 2, 't': 3}
+                        sorted_dirs = sorted(sign.lane.turns, key=lambda d: dir_order.get(d["direction"], 99))
+                        screen_end = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
+                        first = True
+                        for d in sorted_dirs:
+                            draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
+                            first = False
+                    continue
+                
+                # Для остальных знаков - проверяем наличие иконки
+                icon = self.sign_icon_surfaces.get(sign_type)
+                
+                # Отрисовываем ТОЛЬКО если есть валидная иконка
+                if icon is not None and hasattr(sign, 'position'):
+                    try:
+                        icon_size = icon.get_size()
+                        # Проверяем, что иконка не пустая и не белая
+                        if icon_size[0] > 0 and icon_size[1] > 0:
+                            # Дополнительная проверка: не является ли иконка полностью белой/прозрачной
+                            pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
+                            rect = icon.get_rect(center=(pixel_x, pixel_y))
+                            self._frame_canvas.blit(icon, rect)
+                    except Exception:
+                        # Если ошибка при отрисовке - пропускаем знак
+                        pass
+                # Знаки без иконок НЕ отрисовываются (это предотвращает появление белых квадратов)
 
         v = self.current_track_agent
         canvas = self._frame_canvas
