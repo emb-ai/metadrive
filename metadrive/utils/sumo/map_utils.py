@@ -172,7 +172,53 @@ class RoadLaneJunctionGraph:
         center_y = (ymax + ymin) / 2
         self.sumo_net.move(-center_x, -center_y)
 
-        # self.tls = self.sumo_net.getTrafficLights()
+        self.tls = self.sumo_net.getTrafficLights()
+        self.traffic_lights = []
+        self.lane_to_tl_signals = {} 
+        
+        for tl in self.tls:
+            tl_info = {
+                'id': tl.getID(),
+                'controlled_lanes': [],        # заполним позже
+                'programs': tl.getPrograms()
+            }
+            # Собираем управляемые полосы
+            for link in tl.getConnections():
+                from_lane = link[0].getID()
+                to_lane = link[1].getID()
+                tl_info['controlled_lanes'].append({
+                    'from': from_lane,
+                    'to': to_lane,
+                    'tl_index': link[2]
+                })
+            # print("tl_info: ", tl_info)
+            self.traffic_lights.append(tl_info)
+        
+            
+            # Создаем маппинг from_lane -> сигналы светофора
+            for conn in tl_info['controlled_lanes']:
+                from_lane = conn['from']
+                to_lane = conn['to']
+                tl_index = conn['tl_index']
+                
+                phases = []
+                for _, program in tl_info['programs'].items():
+                    program_phases = program.getPhases()
+                    # print("program_phases:  ", program_phases)
+                    for phase in program_phases:
+                        if tl_index < len(phase.state):
+                            state = phase.state[tl_index]
+                            duration = phase.duration
+                            phases.append((state, duration))
+                
+                if from_lane not in self.lane_to_tl_signals:
+                    self.lane_to_tl_signals[from_lane] = []
+                
+                self.lane_to_tl_signals[from_lane].append({
+                    'to_lane': to_lane,
+                    'phases': phases,
+                    'tl_id': tl_index
+                })
 
         self.roads: Dict[str, RoadNode] = {}
         self.lanes: Dict[str, LaneNode] = {}
@@ -342,6 +388,7 @@ def extract_map_features(graph):
                     "exit_lanes": [],
                     "left_lanes": [],
                     "right_lanes": [],
+                    "tl_signals": []
                 }
             elif lane.type == 'sidewalk':
                 ret[id] = {
@@ -424,6 +471,19 @@ def extract_map_features(graph):
 
         if turns:
             ret[base_lane_id]["turns"] = turns
+            
+        if lane_name in graph.lane_to_tl_signals:
+            tl_signals = []
+            for signal_info in graph.lane_to_tl_signals[lane_name]:
+                to_lane_id = f"lane_{signal_info['to_lane']}"
+                if to_lane_id in ret:  # только если целевая полоса существуе
+                    tl_signals.append({
+                        "phases": signal_info['phases'],
+                        "to_lane": to_lane_id,
+                        "tl_id": signal_info['tl_id']  # опционально
+                    })
+            if tl_signals:
+                ret[base_lane_id]["tl_signals"] = tl_signals
 
     for lane_divider_id, lane_divider in enumerate(graph.lane_dividers):
         id = "lane_divider_{}".format(lane_divider_id)

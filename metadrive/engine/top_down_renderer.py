@@ -312,10 +312,11 @@ class TopDownRenderer:
             for sign in sign_mgr.signs:
                 sign_type = type(sign).__name__
                 icon_path = sign.icon_path
-                try:
-                    self.sign_icon_raw[sign_type] = pygame.image.load(icon_path)
-                except Exception as e:
-                    print(f"Failed to load icon for {sign_type}: {e}")
+                if icon_path is not None:
+                    try:
+                        self.sign_icon_raw[sign_type] = pygame.image.load(icon_path)
+                    except Exception as e:
+                        print(f"Failed to load icon for {sign_type}: {e}")
         
         self.logger = get_logger()
         if num_stack < 1:
@@ -754,6 +755,21 @@ class TopDownRenderer:
                             draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
                             first = False
                     continue
+                
+                if sign_type == "TrafficLightSign":
+                    if hasattr(sign, 'position') and hasattr(sign, 'top_down_color'):
+                        pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
+                        
+                        color = sign.top_down_color
+                        
+                        # Рисуем круг с цветом светофора
+                        radius = 8  # размер кружка
+                        pygame.draw.circle(
+                            surface=self._frame_canvas,
+                            color=color,
+                            center=(pixel_x, pixel_y),
+                            radius=radius
+                        )
                 
                 # Для остальных знаков - проверяем наличие иконки
                 icon = self.sign_icon_surfaces.get(sign_type)
