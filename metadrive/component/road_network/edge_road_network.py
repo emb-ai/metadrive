@@ -9,7 +9,7 @@ from metadrive.utils.math import get_boxes_bounding_box
 from metadrive.utils.pg.utils import get_lanes_bounding_box
 from metadrive.utils import get_np_random
 
-lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes", "turns", "speed", "width"])
+lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes", "turns", "speed", "width", "tl_signals"])
 
 
 class EdgeRoadNetwork(BaseRoadNetwork):
@@ -30,6 +30,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
             left_lanes=lane.left_lanes or [],
             right_lanes=lane.right_lanes or [],
             turns=lane.turns or [],
+            tl_signals=lane.tl_signals or [],
             speed=lane.speed or [],
             width=lane.width or []
         )
@@ -162,6 +163,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 SD.LEFT_NEIGHBORS: lane_info.left_lanes,
                 SD.RIGHT_NEIGHBORS: lane_info.right_lanes,
                 SD.TURNS: lane_info.turns,
+                SD.TL_SIGNALS: lane_info.tl_signals,
                 "speed_limit_kmh": lane_info.lane.speed_limit
             }
         return ret

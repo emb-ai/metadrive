@@ -145,6 +145,7 @@ class ScenarioDescription(dict):
     ENTRY = "entry_lanes"
     EXIT = "exit_lanes"
     TURNS = "turns"
+    TL_SIGNALS = "tl_signals"
     SPEED = "speed"
 
     # object

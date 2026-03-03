@@ -54,7 +54,9 @@ class ScenarioLane(PointLane):
         self.left_lanes = map_data[lane_id].get(ScenarioDescription.LEFT_NEIGHBORS, None)
         self.right_lanes = map_data[lane_id].get(ScenarioDescription.RIGHT_NEIGHBORS, None)
         self.turns = map_data[lane_id].get(ScenarioDescription.TURNS, None)
+        self.tl_signals = map_data[lane_id].get(ScenarioDescription.TL_SIGNALS, None)
         self.speed = map_data[lane_id].get(ScenarioDescription.SPEED, None)
+        # print("self.tl_signals: ", self.tl_signals)
 
     @staticmethod
     def try_get_polygon(map_data, lane_id):
@@ -137,6 +139,7 @@ class ScenarioLane(PointLane):
         self.left_lanes = None
         self.right_lanes = None
         self.turns = None
+        self.tl_signals = None
         self.speed = None 
         super(ScenarioLane, self).destroy()
 
