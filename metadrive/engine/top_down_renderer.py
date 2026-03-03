@@ -728,7 +728,7 @@ class TopDownRenderer:
                     screen_end = self._frame_canvas.pos2pix(pos[0], pos[1])
                     first = True
                     for d in sorted_dirs:
-                        draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
+                        # draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
                         first = False
                     route_points.extend(map_data[lane_id]["polyline"])
             if len(route_points) > 1:
@@ -763,7 +763,7 @@ class TopDownRenderer:
                         color = sign.top_down_color
                         
                         # Рисуем круг с цветом светофора
-                        radius = 8  # размер кружка
+                        radius = 4  # размер кружка
                         pygame.draw.circle(
                             surface=self._frame_canvas,
                             color=color,
