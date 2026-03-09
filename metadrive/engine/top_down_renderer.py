@@ -21,65 +21,182 @@ pygame = import_pygame()
 
 color_white = (255, 255, 255)
 
-import math
+
+def _uturn_side_from_dest(src_x, src_y, heading, dest_polyline):
+    """Determine which side (left/right) the U-turn destination lane is on.
+
+    Uses the cross product of the source lane's forward direction with
+    the vector from source anchor to the destination lane's start point.
+
+    Returns +1 for left, -1 for right (in lane-local coordinates).
+    """
+    if dest_polyline is None or len(dest_polyline) < 1:
+        return +1  # default: left (standard for right-hand traffic)
+    dest_x = float(dest_polyline[0][0])
+    dest_y = float(dest_polyline[0][1])
+    # Forward direction of source lane (world coords)
+    fwd_x = math.cos(heading)
+    fwd_y = math.sin(heading)
+    # Vector from source to destination
+    to_x = dest_x - src_x
+    to_y = dest_y - src_y
+    # 2D cross product: positive means destination is to the LEFT
+    cross = fwd_x * to_y - fwd_y * to_x
+    return +1 if cross >= 0 else -1
 
 
-def draw_turn_sign(surface, start_pos, directions, color=(255, 255, 255), bg_color=(0, 0, 255, 128), sign_size=18, first=True):
-    
-    if not directions:
-        return
-    if first:
-        half = sign_size // 2
-        rect = pygame.Rect(start_pos[0] - half, start_pos[1] - half, sign_size + 4, sign_size + 4)
-
-        s = pygame.Surface((sign_size, sign_size), pygame.SRCALPHA)
-        s.fill(bg_color)
-        surface.blit(s, (start_pos[0] - half, start_pos[1] - half))
-
-    center_local = (0, 0)
-    arrow_length = sign_size * 0.5
-    arrow_size = sign_size * 0.15
-
-    local_angle_map = {
-        's': -math.pi / 2,
-        'r': 0,
-        'l': math.pi,
-        't': math.pi / 2,
-    }
-
-    if set(directions) == {'s', 'r'}:
-        offsets = {'s': (-3, 0), 'r': (3, 0)}
-    elif set(directions) == {'s', 'l'}:
-        offsets = {'s': (3, 0), 'l': (-3, 0)}
-    elif set(directions) == {'l', 's', 'r'}:
-        offsets = {'l': (-6, 0), 's': (0, 0), 'r': (6, 0)}
-    else:
-        offsets = {d: (0, 0) for d in directions}
-
-    for d in directions:
-        if d not in local_angle_map:
+def _draw_lane_thin_arrows(surface, map_data):
+    """Draw  vector arrows on each lane, indicating allowed
+    directions.Internal/junction lanes (SUMO IDs with ``:``) are skipped.
+    """
+    for feat_id, data in map_data.items():
+        feat_type = data.get("type")
+        if feat_type is None or not MetaDriveType.is_lane(feat_type):
             continue
-        angle = local_angle_map[d]
-        dx = arrow_length * math.cos(angle)
-        dy = arrow_length * math.sin(angle)
+        raw_lane_id = feat_id[5:] if feat_id.startswith("lane_") else feat_id
+        if ":" in raw_lane_id:
+            continue
+        turns = data.get("turns")
+        if not turns:
+            continue
+        polyline = data.get("polyline")
+        if polyline is None or len(polyline) < 2:
+            continue
 
-        ox, oy = offsets.get(d, (0, 0))
-        sp = (start_pos[0] + ox, start_pos[1] + oy)
-        ep = (sp[0] + dx, sp[1] + dy)
+        dirs = [t["direction"] for t in turns]
 
-        pygame.draw.line(surface, color, sp, ep, 4)
+        end_x, end_y = float(polyline[-1][0]), float(polyline[-1][1])
+        prev_x, prev_y = float(polyline[-2][0]), float(polyline[-2][1])
+        lane_heading = math.atan2(end_y - prev_y, end_x - prev_x)
+        lane_width = data.get("width", 3.5)
 
-        arrow_tip_angle = math.pi / 6
-        left_tip = (
-            ep[0] + arrow_size * math.cos(angle + math.pi - arrow_tip_angle),
-            ep[1] + arrow_size * math.sin(angle + math.pi - arrow_tip_angle)
-        )
-        right_tip = (
-            ep[0] + arrow_size * math.cos(angle + math.pi + arrow_tip_angle),
-            ep[1] + arrow_size * math.sin(angle + math.pi + arrow_tip_angle)
-        )
-        pygame.draw.line(surface, color, ep, left_tip, 4)
-        pygame.draw.line(surface, color, ep, right_tip, 4)
+        pullback = 6.0
+        dx, dy = end_x - prev_x, end_y - prev_y
+        seg_len = math.hypot(dx, dy)
+        if seg_len > 1e-6:
+            frac = min(pullback / seg_len, 0.9)
+            ax = end_x - dx * frac
+            ay = end_y - dy * frac
+        else:
+            ax, ay = end_x, end_y
+
+        # u-turn side 
+        uturn_side = +1  
+        for t in turns:
+            if t["direction"] == 't':
+                dest_id = t.get("to_lane")
+                if dest_id and dest_id in map_data:
+                    dest_poly = map_data[dest_id].get("polyline")
+                    uturn_side = _uturn_side_from_dest(
+                        ax, ay, lane_heading, dest_poly
+                    )
+                break
+
+        _draw_thin_arrows_at(surface, ax, ay, lane_heading, dirs, lane_width,
+                             uturn_side=uturn_side)
+
+
+def _draw_thin_arrows_at(surface, world_x, world_y, heading, dirs, lane_width,
+                         color=(255, 255, 255), shaft_m=5.0, line_w=2,
+                         uturn_side=1):
+    """Draw a complex  arrow with shared stem and per-category branches """
+    if not dirs:
+        return
+
+    #  count raw straights
+    _CAT = {'l': 'left', 'L': 'left', 's': 'straight',
+            'r': 'right', 'R': 'right', 't': 'uturn'}
+    seen = set()
+    cats = []
+    straight_count = 0
+    for d in dirs:
+        c = _CAT.get(d)
+        if c == 'straight':
+            straight_count += 1
+        if c and c not in seen:
+            seen.add(c)
+            cats.append(c)
+    if not cats:
+        return
+
+    fwd_x, fwd_y = math.cos(heading), -math.sin(heading)
+    rgt_x, rgt_y = math.sin(heading), math.cos(heading)
+
+    px = shaft_m * surface.scaling  
+    lw = max(1, line_w)
+    h_len = px * 0.10               # arrowhead length
+    h_hw = max(1, px * 0.05)        # arrowhead half-width
+    stem = px * 0.45                # shared stem length
+    branch = px * 0.25              # branch length
+    spread = branch * 0.2           # lateral offset for left/right
+    branch_gap = px * 0.4           # backward shift of left/right junction from stem tip
+
+    cx, cy = surface.pos2pix(world_x, world_y)
+    # Shared stem
+    bx = cx + stem * fwd_x
+    by = cy + stem * fwd_y
+    pygame.draw.line(surface, color, (cx, cy), (bx, by), lw)
+
+    # Left/right branches start here (pulled back from stem tip)
+    jx = bx - branch_gap * fwd_x
+    jy = by - branch_gap * fwd_y
+
+    def _head(tx, ty, dx, dy):
+        """Filled triangle arrowhead at (tx,ty) pointing along (dx,dy)."""
+        m = math.hypot(dx, dy)
+        if m < 1e-6:
+            return
+        nx, ny = dx / m, dy / m
+        px_, py_ = -ny, nx
+        bx_ = tx - h_len * nx
+        by_ = ty - h_len * ny
+        pygame.draw.polygon(surface, color, [
+            (tx, ty),
+            (bx_ + h_hw * px_, by_ + h_hw * py_),
+            (bx_ - h_hw * px_, by_ - h_hw * py_),
+        ])
+
+    for cat in cats:
+        if cat == 'straight':
+            tx, ty = bx + branch * fwd_x, by + branch * fwd_y
+            pygame.draw.line(surface, color, (bx, by), (tx, ty), lw)
+            _head(tx, ty, fwd_x, fwd_y)
+
+            if straight_count >= 2:
+                # Second straight
+                lx, ly = -rgt_x, -rgt_y
+                q = branch * 0.65
+                p1x = bx + q * 0.3 * fwd_x
+                p1y = by + q * 0.3 * fwd_y
+                p2x = p1x + q * 1.2 * lx
+                p2y = p1y + q * 1.2 * ly
+                p3x = p2x + q * 1.4 * fwd_x
+                p3y = p2y + q * 1.4 * fwd_y
+                pygame.draw.lines(surface, color, False,
+                                  [(bx, by), (p1x, p1y), (p2x, p2y), (p3x, p3y)], lw)
+                _head(p3x, p3y, fwd_x, fwd_y)
+
+        elif cat in ('left', 'right'):
+            s = -1 if cat == 'left' else 1
+            ox = jx + spread * s * rgt_x
+            oy = jy + spread * s * rgt_y
+            tx = ox + branch * s * rgt_x
+            ty = oy + branch * s * rgt_y
+            pygame.draw.line(surface, color, (jx, jy), (ox, oy), lw)
+            pygame.draw.line(surface, color, (ox, oy), (tx, ty), lw)
+            _head(tx, ty, s * rgt_x, s * rgt_y)
+
+        elif cat == 'uturn':
+            lx = -rgt_x * uturn_side
+            ly = -rgt_y * uturn_side
+            q = branch * 0.65
+            p1x, p1y = bx + q * 0.3 * fwd_x, by + q * 0.3 * fwd_y
+            p2x, p2y = p1x + q * 1.2 * lx, p1y + q * 1.2 * ly
+            p3x, p3y = p2x - q * 1.4 * fwd_x, p2y - q * 1.4 * fwd_y
+            pygame.draw.lines(surface, color, False,
+                              [(bx, by), (p1x, p1y), (p2x, p2y), (p3x, p3y)], lw)
+            _head(p3x, p3y, -fwd_x, -fwd_y)
+
 
 def draw_top_down_map_native(
     map,
@@ -127,25 +244,50 @@ def draw_top_down_map_native(
     if semantic_map:
         all_lanes = map.get_map_features(line_sample_interval)
 
-        for obj in all_lanes.values():
-            if MetaDriveType.is_lane(obj["type"]) and not draw_center_line:
-                pygame.draw.polygon(
-                    surface, TopDownSemanticColor.get_color(obj["type"]),
-                    [surface.pos2pix(p[0], p[1]) for p in obj["polygon"]]
-                )
+        # ScenarioMap (SUMO, Waymo, nuScenes): draw polygons from raw map_data — identical to ScenarioNet
+        if isinstance(map, ScenarioMap) and map.blocks:
+            block = map.blocks[-1]
+            for feat_id, data in block.map_data.items():
+                feat_type = data.get("type")
+                if not feat_type:
+                    continue
+                polygon = data.get(ScenarioDescription.POLYGON)
+                if polygon is None or len(polygon) < 3:
+                    continue
+                # Lanes, sidewalks, crosswalks — all with polygon
+                if not (MetaDriveType.is_lane(feat_type) or MetaDriveType.is_sidewalk(feat_type)
+                        or MetaDriveType.is_crosswalk(feat_type)):
+                    continue
+                polygon = np.asarray(polygon)[..., :2]
+                pts = [surface.pos2pix(float(p[0]), float(p[1])) for p in polygon]
+                color = tuple(int(c) for c in TopDownSemanticColor.get_color(feat_type))
+                pygame.draw.polygon(surface, color, pts)
+        else:
+            for obj in all_lanes.values():
+                if MetaDriveType.is_lane(obj["type"]) and not draw_center_line:
+                    polygon = obj.get("polygon")
+                    if polygon is not None and len(polygon) >= 3:
+                        polygon = np.asarray(polygon)[..., :2]
+                        pts = [surface.pos2pix(float(p[0]), float(p[1])) for p in polygon]
+                        color = tuple(int(c) for c in TopDownSemanticColor.get_color(obj["type"]))
+                        pygame.draw.polygon(surface, color, pts)
 
-            elif (MetaDriveType.is_road_line(obj["type"]) or MetaDriveType.is_road_boundary_line(obj["type"])
+        for obj in all_lanes.values():
+            if (MetaDriveType.is_road_line(obj["type"])
                   or (MetaDriveType.is_lane(obj["type"]) and draw_center_line)):
+                polyline = obj.get("polyline")
+                if polyline is None or len(polyline) < 2:
+                    continue
                 if semantic_broken_line and MetaDriveType.is_broken_line(obj["type"]):
                     points_to_skip = math.floor(PGDrivableAreaProperty.STRIPE_LENGTH * 2 / line_sample_interval) * 2
                 else:
                     points_to_skip = 1
-                for index in range(0, len(obj["polyline"]) - 1, points_to_skip):
+                for index in range(0, len(polyline) - 1, points_to_skip):
                     color = [255, 0, 0] if MetaDriveType.is_lane(obj["type"]) and index==0\
                         else TopDownSemanticColor.get_color(obj["type"])
-                    if index + 1 < len(obj["polyline"]):
-                        s_p = obj["polyline"][index]
-                        e_p = obj["polyline"][index + 1]
+                    if index + 1 < len(polyline):
+                        s_p = polyline[index]
+                        e_p = polyline[index + 1]
                         pygame.draw.line(
                             surface,
                             color,
@@ -171,6 +313,10 @@ def draw_top_down_map_native(
                     for l in map.road_network.graph[_from][_to]:
                         two_side = True if l is map.road_network.graph[_from][_to][-1] or decoration else False
                         LaneGraphics.display(l, surface, two_side, use_line_color=True)
+
+    # Draw thin direction arrows on each lane near its end
+    if isinstance(map, ScenarioMap) and map.blocks:
+        _draw_lane_thin_arrows(surface, map.blocks[-1].map_data)
 
     return surface if return_surface else WorldSurface.to_cv2_image(surface)
 
@@ -497,30 +643,53 @@ class TopDownRenderer:
     def current_track_agent(self):
         return self.engine.current_track_agent
 
+    def _draw_lane_arrows(self, lane, turns, map_data):
+        """Draw direction arrows for a lane using its geometry and turn info.
+
+        Uses the same pullback (6m) as _draw_lane_thin_arrows so all arrows
+        appear at the same distance from the lane end.
+        """
+        if not turns:
+            return
+        pullback = 5.0
+        long_pos = max(0.1, lane.length - pullback)
+        pos = lane.position(long_pos, 0)
+        heading = lane.heading_theta_at(long_pos)
+        width = lane.width_at(long_pos)
+
+        dirs = [t["direction"] for t in turns]
+
+        uturn_side = +1
+        for t in turns:
+            if t["direction"] == 't':
+                to_id = t.get("to_lane")
+                if to_id and to_id in map_data:
+                    dest_poly = map_data[to_id].get("polyline")
+                    uturn_side = _uturn_side_from_dest(
+                        float(pos[0]), float(pos[1]), heading, dest_poly
+                    )
+                break
+
+        _draw_thin_arrows_at(
+            self._frame_canvas, float(pos[0]), float(pos[1]),
+            heading, dirs, width, uturn_side=uturn_side
+        )
+
+    def _is_sign_obj(self, v):
+        """Check if a history_object or live object is a traffic sign."""
+        sign_mgr = getattr(self.engine, 'traffic_sign_manager', None)
+        if sign_mgr:
+            if any(s is not None and getattr(s, 'name', None) == v.name for s in sign_mgr.signs):
+                return True
+        if getattr(v, 'type', None) == MetaDriveType.TRAFFIC_OBJECT:
+            if getattr(v, 'WIDTH', 2) < 1.0 and getattr(v, 'LENGTH', 2) < 1.0:
+                return True
+        return False
+
     @staticmethod
     def _append_frame_objects(objects):
-        """
-        Extract information for drawing objects
-        Args:
-            objects: list of BaseObject
-
-        Returns: list of history_object
-
-        """
         frame_objects = []
         for name, obj in objects.items():
-            # Пропускаем знаки - они отрисовываются отдельно через иконки
-            # Проверяем по имени класса или наличию icon_path
-            if obj is not None:
-                obj_class_name = type(obj).__name__
-                # Проверяем по имени класса знаков
-                if obj_class_name in ['StopSign', 'SpeedLimitSign', 'SpeedLimitSign20', 'SpeedLimitSign40', 
-                                      'SpeedLimitSign60', 'SpeedLimitSign30', 'NoStoppingAllowedSign', 'DirectionSign']:
-                    continue
-                # Также проверяем наличие icon_path - это признак знака
-                if hasattr(obj, 'icon_path') and obj.icon_path is not None:
-                    continue
-            
             frame_objects.append(
                 history_object(
                     name=name,
@@ -549,20 +718,8 @@ class TopDownRenderer:
             if self.history_smooth != 0 and (i % self.history_smooth != 0):
                 continue
             for v in objects:
-                # Пропускаем знаки - они отрисовываются отдельно через иконки
-                # Проверяем по типу объекта (TRAFFIC_OBJECT с icon_path) или по имени в traffic_sign_manager
-                if hasattr(self.engine, 'traffic_sign_manager'):
-                    sign_mgr = self.engine.traffic_sign_manager
-                    if sign_mgr:
-                        # Проверяем по имени
-                        if any(sign is not None and hasattr(sign, 'name') and sign.name == v.name for sign in sign_mgr.signs):
-                            continue
-                        # Проверяем по типу - знаки имеют тип TRAFFIC_OBJECT
-                        if v.type == MetaDriveType.TRAFFIC_OBJECT:
-                            # Дополнительная проверка: если это TRAFFIC_OBJECT, проверяем, не знак ли это
-                            # Знаки обычно имеют маленькие размеры (WIDTH < 1, LENGTH < 1)
-                            if hasattr(v, 'WIDTH') and hasattr(v, 'LENGTH') and v.WIDTH < 1.0 and v.LENGTH < 1.0:
-                                continue
+                if self._is_sign_obj(v):
+                    continue
                 c = v.color
                 h = v.heading_theta
                 h = h if abs(h) > 2 * np.pi / 180 else 0
@@ -600,20 +757,8 @@ class TopDownRenderer:
         # i = int(len(self.history_vehicles) / 2)
         i = -1
         for v in self.history_objects[i]:
-            # Пропускаем знаки - они отрисовываются отдельно через иконки
-            # Проверяем по типу объекта (TRAFFIC_OBJECT с icon_path) или по имени в traffic_sign_manager
-            if hasattr(self.engine, 'traffic_sign_manager'):
-                sign_mgr = self.engine.traffic_sign_manager
-                if sign_mgr:
-                    # Проверяем по имени
-                    if any(sign is not None and hasattr(sign, 'name') and sign.name == v.name for sign in sign_mgr.signs):
-                        continue
-                    # Проверяем по типу - знаки имеют тип TRAFFIC_OBJECT
-                    if v.type == MetaDriveType.TRAFFIC_OBJECT:
-                        # Дополнительная проверка: если это TRAFFIC_OBJECT, проверяем, не знак ли это
-                        # Знаки обычно имеют маленькие размеры (WIDTH < 1, LENGTH < 1)
-                        if hasattr(v, 'WIDTH') and hasattr(v, 'LENGTH') and v.WIDTH < 1.0 and v.LENGTH < 1.0:
-                            continue
+            if self._is_sign_obj(v):
+                continue
             h = v.heading_theta
             c = v.color
             h = h if abs(h) > 2 * np.pi / 180 else 0
@@ -721,15 +866,6 @@ class TopDownRenderer:
 
             for lane_id in checkpoints:
                 if lane_id in map_data and "polyline" in map_data[lane_id]:
-                    lane = self.map.road_network.get_lane(lane_id)
-                    dir_order = {'l': 0, 's': 1, 'r': 2, 't': 3}
-                    sorted_dirs = sorted(lane.turns, key=lambda d: dir_order.get(d["direction"], 99))
-                    pos = lane.position(lane.length, lane.width*2)
-                    screen_end = self._frame_canvas.pos2pix(pos[0], pos[1])
-                    first = True
-                    for d in sorted_dirs:
-                        draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
-                        first = False
                     route_points.extend(map_data[lane_id]["polyline"])
             if len(route_points) > 1:
                 for i in range(len(route_points) - 1):
@@ -744,16 +880,7 @@ class TopDownRenderer:
                     continue
                 sign_type = type(sign).__name__
                 
-                # DirectionSign обрабатывается отдельно
                 if sign_type == "DirectionSign":
-                    if hasattr(sign, 'lane') and hasattr(sign.lane, 'turns'):
-                        dir_order = {'l': 0, 's': 1, 'r': 2, 't': 3}
-                        sorted_dirs = sorted(sign.lane.turns, key=lambda d: dir_order.get(d["direction"], 99))
-                        screen_end = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
-                        first = True
-                        for d in sorted_dirs:
-                            draw_turn_sign(self._frame_canvas, screen_end, d["direction"], color=(255, 255, 255), first=first)
-                            first = False
                     continue
                 
                 if sign_type == "TrafficLightSign":
@@ -773,19 +900,24 @@ class TopDownRenderer:
                 
                 # Для остальных знаков - проверяем наличие иконки
                 icon = self.sign_icon_surfaces.get(sign_type)
-                
+
                 # Отрисовываем ТОЛЬКО если есть валидная иконка
                 if icon is not None and hasattr(sign, 'position'):
                     try:
                         icon_size = icon.get_size()
-                        # Проверяем, что иконка не пустая и не белая
                         if icon_size[0] > 0 and icon_size[1] > 0:
-                            # Дополнительная проверка: не является ли иконка полностью белой/прозрачной
                             pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
-                            rect = icon.get_rect(center=(pixel_x, pixel_y))
-                            self._frame_canvas.blit(icon, rect)
+                            # Compute rotation from sign heading:
+                            # heading_theta = lane_heading + π/2 (perpendicular to lane)
+                            # For pygame: rotate so icon faces the driver
+                            rotation_deg = getattr(sign, 'top_down_icon_rotation_deg', None)
+                            if rotation_deg is None:
+                                sign_heading = getattr(sign, 'heading_theta', 0.0)
+                                rotation_deg = float(np.rad2deg(sign_heading) - 180.0)
+                            draw_icon = pygame.transform.rotate(icon, rotation_deg)
+                            rect = draw_icon.get_rect(center=(pixel_x, pixel_y))
+                            self._frame_canvas.blit(draw_icon, rect)
                     except Exception:
-                        # Если ошибка при отрисовке - пропускаем знак
                         pass
                 # Знаки без иконок НЕ отрисовываются (это предотвращает появление белых квадратов)
 
