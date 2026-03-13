@@ -18,6 +18,7 @@ except ImportError:
     raise ImportError("Please install sumolib before running this script via: pip install sumolib")
 from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.geometry.base import CAP_STYLE, JOIN_STYLE
+from shapely.ops import unary_union
 from collections import defaultdict
 
 
@@ -182,8 +183,8 @@ class RoadLaneJunctionGraph:
 
         self.tls = self.sumo_net.getTrafficLights()
         self.traffic_lights = []
-        self.lane_to_tl_signals = {} 
-        
+        self.lane_to_tl_signals = {}
+
         for tl in self.tls:
             tl_info = {
                 'id': tl.getID(),
@@ -201,14 +202,14 @@ class RoadLaneJunctionGraph:
                 })
             # print("tl_info: ", tl_info)
             self.traffic_lights.append(tl_info)
-        
-            
+
+
             # Создаем маппинг from_lane -> сигналы светофора
             for conn in tl_info['controlled_lanes']:
                 from_lane = conn['from']
                 to_lane = conn['to']
                 tl_index = conn['tl_index']
-                
+
                 phases = []
                 for _, program in tl_info['programs'].items():
                     program_phases = program.getPhases()
@@ -218,10 +219,10 @@ class RoadLaneJunctionGraph:
                             state = phase.state[tl_index]
                             duration = phase.duration
                             phases.append((state, duration))
-                
+
                 if from_lane not in self.lane_to_tl_signals:
                     self.lane_to_tl_signals[from_lane] = []
-                
+
                 self.lane_to_tl_signals[from_lane].append({
                     'to_lane': to_lane,
                     'phases': phases,
@@ -339,7 +340,6 @@ class RoadLaneJunctionGraph:
                     lane_dividers.append(left_side)
 
         # The edge borders that overlapped in positions form an edge divider
-        matched = set()
         for i in range(len(edge_borders) - 1):
             for j in range(i + 1, len(edge_borders)):
                 edge_border_i = np.array([edge_borders[i][0], edge_borders[i][-1]])  # start and end position
@@ -350,13 +350,44 @@ class RoadLaneJunctionGraph:
                 # The edge borders of two lanes do not always overlap perfectly, thus relax the tolerance threshold to 1
                 if np.linalg.norm(edge_border_i - edge_border_j) < threshold:
                     edge_dividers.append(edge_borders[i])
-                    matched.add(i)
-                    matched.add(j)
 
-        # Unmatched edge borders are the outer road boundaries
-        road_boundaries = [edge_borders[k] for k in range(len(edge_borders)) if k not in matched]
+        # Use the exterior contour of merged driving area as true road boundaries.
+        road_boundaries = self._extract_external_road_boundaries()
 
         return lane_dividers, edge_dividers, road_boundaries
+
+    def _extract_external_road_boundaries(self, min_length=3.0):
+        driving_polygons = []
+        for lane in self.lanes.values():
+            if lane.type != "driving":
+                continue
+            if lane.function in ["internal", "walkingarea", "crossing"]:
+                continue
+            poly = getattr(getattr(lane, "shape", None), "shape", None)
+            if not isinstance(poly, Polygon) or poly.is_empty:
+                continue
+            driving_polygons.append(poly)
+
+        if not driving_polygons:
+            return []
+
+        merged = unary_union(driving_polygons)
+        if isinstance(merged, Polygon):
+            polygons = [merged]
+        elif isinstance(merged, MultiPolygon):
+            polygons = list(merged.geoms)
+        else:
+            polygons = []
+
+        road_boundaries = []
+        for poly in polygons:
+            coords = list(poly.exterior.coords)
+            if len(coords) < 2:
+                continue
+            if LineString(coords).length < min_length:
+                continue
+            road_boundaries.append([(float(x), float(y)) for x, y in coords])
+        return road_boundaries
 
 
 def extract_map_features(graph):
@@ -461,8 +492,8 @@ def extract_map_features(graph):
                     SD.TYPE: MetaDriveType.CROSSWALK,
                     SD.POLYGON: boundary_polygon,
                 }
-                
-                
+
+
     for road_id, road in graph.roads.items():
         for lane in road.lanes:
             if lane.type != 'driving':
@@ -480,7 +511,7 @@ def extract_map_features(graph):
 
             ret[lane_id]["left_lanes"] = left_lanes
             ret[lane_id]["right_lanes"] = right_lanes
-                
+
     for lane_name, lane_node in graph.lanes.items():
         lane_id = "lane_{}".format(lane_name)
         if lane_id not in ret:
@@ -499,7 +530,7 @@ def extract_map_features(graph):
             if in_id in ret:
                 entry_ids.append(in_id)
         ret[lane_id]["entry_lanes"] = entry_ids
-        
+
     for lane_name, lane_node in graph.lanes.items():
         base_lane_id = f"lane_{lane_name}"
         if base_lane_id not in ret or lane_node.type != 'driving':
@@ -535,7 +566,7 @@ def extract_map_features(graph):
 
         if turns:
             ret[base_lane_id]["turns"] = turns
-            
+
         if lane_name in graph.lane_to_tl_signals:
             tl_signals = []
             for signal_info in graph.lane_to_tl_signals[lane_name]:
@@ -556,5 +587,9 @@ def extract_map_features(graph):
     for edge_divider_id, edge_divider in enumerate(graph.edge_dividers):
         id = "edge_divider_{}".format(edge_divider_id)
         ret[id] = {SD.TYPE: MetaDriveType.LINE_SOLID_SINGLE_YELLOW, SD.POLYLINE: edge_divider}
+
+    for boundary_id, boundary in enumerate(getattr(graph, "road_boundaries", [])):
+        id = "road_boundary_{}".format(boundary_id)
+        ret[id] = {SD.TYPE: MetaDriveType.BOUNDARY_LINE, SD.POLYLINE: boundary}
 
     return ret
