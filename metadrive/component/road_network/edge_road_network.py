@@ -116,7 +116,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 if _next in path:
                     # circle
                     continue
-                if goal is None and len(path) > 1:
+                if goal is None and len(path) > 3:
                     yield path + [_next]
                 if _next == goal:
                     yield path + [_next]
