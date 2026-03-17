@@ -476,6 +476,9 @@ class TopDownSemanticColor:
         # cyclist and motorcycle
         elif type == MetaDriveType.CYCLIST:
             ret = np.array([75, 224, 67])
+        # crosswalk
+        elif MetaDriveType.is_crosswalk(type):
+            ret = np.array([55, 176, 189])
         else:
             ret = np.array([125, 67, 224])
         # else:
