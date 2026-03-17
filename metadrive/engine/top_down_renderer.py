@@ -1085,8 +1085,7 @@ class TopDownRenderer:
 
                         color = sign.top_down_color
 
-
-                        radius = 4
+                        radius = 8
                         pygame.draw.circle(
                             surface=self._frame_canvas,
                             color=color,
