@@ -476,18 +476,18 @@ def extract_map_features(graph):
                     "right_lanes": [],
                     "tl_signals": []
                 }
-            elif lane.type == 'sidewalk':
-                ret[id] = {
-                    SD.TYPE: MetaDriveType.BOUNDARY_SIDEWALK,
-                    SD.POLYGON: boundary_polygon,
-                }
+            # elif lane.type == 'sidewalk':
+            #     ret[id] = {
+            #         SD.TYPE: MetaDriveType.BOUNDARY_SIDEWALK,
+            #         SD.POLYGON: boundary_polygon,
+            #     }
             elif lane.type == 'shoulder':
                 ret[id] = {
                     SD.TYPE: MetaDriveType.BOUNDARY_SIDEWALK,
                     SD.POLYGON: boundary_polygon,
                 }
             elif lane.type == 'crossing':
-                print('hello')
+                # print('hello')
                 ret[id] = {
                     SD.TYPE: MetaDriveType.CROSSWALK,
                     SD.POLYGON: boundary_polygon,
@@ -588,8 +588,8 @@ def extract_map_features(graph):
         id = "edge_divider_{}".format(edge_divider_id)
         ret[id] = {SD.TYPE: MetaDriveType.LINE_SOLID_SINGLE_YELLOW, SD.POLYLINE: edge_divider}
 
-    for boundary_id, boundary in enumerate(getattr(graph, "road_boundaries", [])):
-        id = "road_boundary_{}".format(boundary_id)
-        ret[id] = {SD.TYPE: MetaDriveType.BOUNDARY_LINE, SD.POLYLINE: boundary}
+    # for boundary_id, boundary in enumerate(getattr(graph, "road_boundaries", [])):
+    #     id = "road_boundary_{}".format(boundary_id)
+    #     ret[id] = {SD.TYPE: MetaDriveType.BOUNDARY_LINE, SD.POLYLINE: boundary}
 
     return ret
