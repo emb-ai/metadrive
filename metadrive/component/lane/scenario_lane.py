@@ -49,7 +49,7 @@ class ScenarioLane(PointLane):
         self.index = lane_id
         self.lane_type = map_data[lane_id]["type"]
         self.entry_lanes = map_data[lane_id].get(ScenarioDescription.ENTRY, None)
-        self.width = map_data[lane_id].get(ScenarioDescription.WIDTH, None)
+        self.width = map_data[lane_id].get(ScenarioDescription.WIDTH, 3.35)
         self.exit_lanes = map_data[lane_id].get(ScenarioDescription.EXIT, None)
         self.left_lanes = map_data[lane_id].get(ScenarioDescription.LEFT_NEIGHBORS, None)
         self.right_lanes = map_data[lane_id].get(ScenarioDescription.RIGHT_NEIGHBORS, None)
