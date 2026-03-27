@@ -493,6 +493,29 @@ def extract_map_features(graph):
                     SD.POLYGON: boundary_polygon,
                 }
 
+    # Add junction (internal) driving lanes so that navigation can route through them.
+    # Without this, exit_lanes skip junctions and vehicles disappear at intersections.
+    for junction_id, junction in graph.junctions.items():
+        for lane in junction.lanes:
+            if lane.type != 'driving':
+                continue
+            lane_id = f"lane_{lane.name}"
+            if lane_id in ret:
+                continue
+            boundary_polygon = [(x, y) for x, y in lane.shape.shape.exterior.coords]
+            ret[lane_id] = {
+                SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
+                SD.POLYLINE: lane.sumolib_obj.getShape(),
+                SD.POLYGON: boundary_polygon,
+                SD.WIDTH: lane.width,
+                "speed": lane.speed,
+                "entry_lanes": [],
+                "turns": [],
+                "exit_lanes": [],
+                "left_lanes": [],
+                "right_lanes": [],
+                "tl_signals": []
+            }
 
     for road_id, road in graph.roads.items():
         for lane in road.lanes:

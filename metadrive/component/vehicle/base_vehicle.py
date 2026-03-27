@@ -535,7 +535,10 @@ class BaseVehicle(BaseObject, BaseVehicleState):
             return 0, 0
         current_reference_lane = navigation.current_ref_lanes[0]
         _, lateral_to_reference = current_reference_lane.local_coordinates(self.position)
-        lateral_to_left = lateral_to_reference + navigation.get_current_lane_width() / 2
+        lane_width = navigation.get_current_lane_width()
+        if lane_width is None:
+            return 0, 0
+        lateral_to_left = lateral_to_reference + lane_width / 2
         lateral_to_right = navigation.get_current_lateral_range(self.position, self.engine) - lateral_to_left
         return lateral_to_left, lateral_to_right
 

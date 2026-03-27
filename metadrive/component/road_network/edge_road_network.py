@@ -64,6 +64,12 @@ class EdgeRoadNetwork(BaseRoadNetwork):
         rightmost = max(candidates, key=lambda x: x[1])
         return rightmost[0]
 
+    def has_connection(self, lane_index_1, lane_index_2):
+        """Return True if lane_index_1 is a predecessor of lane_index_2 via exit_lanes."""
+        if lane_index_1 in self.graph:
+            return lane_index_2 in self.graph[lane_index_1].exit_lanes
+        return False
+
     def get_lane(self, index: LaneIndex):
         return self.graph[index].lane
 
@@ -125,12 +131,17 @@ class EdgeRoadNetwork(BaseRoadNetwork):
 
     def get_peer_lanes_from_index(self, lane_index):
         info: lane_info = self.graph[lane_index]
-        ret = [self.graph[lane_index].lane]
+        # Build ordered list: [leftmost, ..., current, ..., rightmost]
+        # so that list.index(lane) gives the correct position for IDMPolicy
+        left = []
         for left_n in info.left_lanes:
-            ret.append(self.graph[left_n].lane)
+            if left_n in self.graph:
+                left.append(self.graph[left_n].lane)
+        right = []
         for right_n in info.right_lanes:
-            ret.append(self.graph[right_n].lane)
-        return ret
+            if right_n in self.graph:
+                right.append(self.graph[right_n].lane)
+        return list(reversed(left)) + [self.graph[lane_index].lane] + right
 
     def destroy(self):
         """
