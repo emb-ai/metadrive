@@ -327,6 +327,9 @@ class RoadLaneJunctionGraph:
 
             lanes = edge.getLanes()
             for i in range(len(lanes)):
+                lane_obj = self.lanes.get(lanes[i].getID())
+                if lane_obj and lane_obj.type != 'driving':
+                    continue
                 shape = lanes[i].getShape()
                 left_side = sumolib.geomhelper.move2side(shape, -lanes[i].getWidth() / 2)
                 right_side = sumolib.geomhelper.move2side(shape, lanes[i].getWidth() / 2)
@@ -397,62 +400,62 @@ def extract_map_features(graph):
     ret = {}
 
     # Build junction polygons (intersection areas) and their outer boundary lines
-    for junction_id, junction in graph.junctions.items():
-        if len(junction.shape) <= 2:
-            continue
-        boundary_polygon = Polygon(junction.shape)
-        if not boundary_polygon.is_valid or boundary_polygon.is_empty:
-            continue
-        boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
-        id = "junction_{}".format(junction.name)
-        ret[id] = {
-            SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
-            SD.POLYLINE: junction.shape,
-            SD.POLYGON: boundary_coords,
-        }
+    # for junction_id, junction in graph.junctions.items():
+    #     if len(junction.shape) <= 2:
+    #         continue
+    #     boundary_polygon = Polygon(junction.shape)
+    #     if not boundary_polygon.is_valid or boundary_polygon.is_empty:
+    #         continue
+    #     boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
+    #     id = "junction_{}".format(junction.name)
+    #     ret[id] = {
+    #         SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
+    #         SD.POLYLINE: junction.shape,
+    #         SD.POLYGON: boundary_coords,
+    #     }
 
-        # Collect lane endpoints at the junction side to identify road openings
-        lane_endpoints = []
-        for road in junction.incoming:
-            for lane in road.lanes:
-                if lane.type != 'driving':
-                    continue
-                shape = lane.sumolib_obj.getShape()
-                lane_endpoints.append(np.array(shape[-1][:2]))  # end of lane → junction
-        for road in junction.outgoing:
-            for lane in road.lanes:
-                if lane.type != 'driving':
-                    continue
-                shape = lane.sumolib_obj.getShape()
-                lane_endpoints.append(np.array(shape[0][:2]))  # start of lane → junction
+    #     # Collect lane endpoints at the junction side to identify road openings
+    #     lane_endpoints = []
+    #     for road in junction.incoming:
+    #         for lane in road.lanes:
+    #             if lane.type != 'driving':
+    #                 continue
+    #             shape = lane.sumolib_obj.getShape()
+    #             lane_endpoints.append(np.array(shape[-1][:2]))  # end of lane → junction
+    #     for road in junction.outgoing:
+    #         for lane in road.lanes:
+    #             if lane.type != 'driving':
+    #                 continue
+    #             shape = lane.sumolib_obj.getShape()
+    #             lane_endpoints.append(np.array(shape[0][:2]))  # start of lane → junction
 
-        # Filter: keep only perimeter segments whose midpoint is far from any lane endpoint
-        # (segments near lane endpoints are road openings, not outer walls)
-        open_threshold = 3.0  # meters
-        seg_idx = 0
-        current_segment = []
-        for k in range(len(boundary_coords) - 1):
-            p0 = np.array(boundary_coords[k][:2])
-            p1 = np.array(boundary_coords[k + 1][:2])
-            mid = (p0 + p1) / 2
-            is_opening = any(np.linalg.norm(mid - ep) < open_threshold for ep in lane_endpoints)
-            if not is_opening:
-                if not current_segment:
-                    current_segment.append(tuple(p0))
-                current_segment.append(tuple(p1))
-            else:
-                if len(current_segment) >= 2:
-                    ret["junction_boundary_{}_{}".format(junction.name, seg_idx)] = {
-                        SD.TYPE: MetaDriveType.BOUNDARY_LINE,
-                        SD.POLYLINE: current_segment,
-                    }
-                    seg_idx += 1
-                current_segment = []
-        if len(current_segment) >= 2:
-            ret["junction_boundary_{}_{}".format(junction.name, seg_idx)] = {
-                SD.TYPE: MetaDriveType.BOUNDARY_LINE,
-                SD.POLYLINE: current_segment,
-            }
+    #     # Filter: keep only perimeter segments whose midpoint is far from any lane endpoint
+    #     # (segments near lane endpoints are road openings, not outer walls)
+    #     open_threshold = 3.0  # meters
+    #     seg_idx = 0
+    #     current_segment = []
+    #     for k in range(len(boundary_coords) - 1):
+    #         p0 = np.array(boundary_coords[k][:2])
+    #         p1 = np.array(boundary_coords[k + 1][:2])
+    #         mid = (p0 + p1) / 2
+    #         is_opening = any(np.linalg.norm(mid - ep) < open_threshold for ep in lane_endpoints)
+    #         if not is_opening:
+    #             if not current_segment:
+    #                 current_segment.append(tuple(p0))
+    #             current_segment.append(tuple(p1))
+    #         else:
+    #             if len(current_segment) >= 2:
+    #                 ret["junction_boundary_{}_{}".format(junction.name, seg_idx)] = {
+    #                     SD.TYPE: MetaDriveType.BOUNDARY_LINE,
+    #                     SD.POLYLINE: current_segment,
+    #                 }
+    #                 seg_idx += 1
+    #             current_segment = []
+    #     if len(current_segment) >= 2:
+    #         ret["junction_boundary_{}_{}".format(junction.name, seg_idx)] = {
+    #             SD.TYPE: MetaDriveType.BOUNDARY_LINE,
+    #             SD.POLYLINE: current_segment,
+    #         }
 
     # Сначала создадим все полосы без связей
     lane_names = set()

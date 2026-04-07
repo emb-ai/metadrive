@@ -98,14 +98,15 @@ class TopDownMultiChannel(TopDownObservation):
             lane_index = checkpoints[i]
             try:
                 lane = self.road_network.get_lane(lane_index)
-                # print("lane_index:  ", lane_index, lane.left_lanes, lane.right_lanes)
                 # Отрисовка всей полосы как "навигационной зоны"
-                for left_index in lane.left_lanes:
-                    left_lane = self.road_network.get_lane(left_index)
-                    LaneGraphics.draw_drivable_area(left_lane, canvas, color=color)
-                for right_index in lane.right_lanes:
-                    right_lane = self.road_network.get_lane(right_index)
-                    LaneGraphics.draw_drivable_area(right_lane, canvas, color=color)
+                if lane.left_lanes:
+                    for left_index in lane.left_lanes:
+                        left_lane = self.road_network.get_lane(left_index)
+                        LaneGraphics.draw_drivable_area(left_lane, canvas, color=color)
+                if lane.right_lanes:
+                    for right_index in lane.right_lanes:
+                        right_lane = self.road_network.get_lane(right_index)
+                        LaneGraphics.draw_drivable_area(right_lane, canvas, color=color)
                 LaneGraphics.draw_drivable_area(lane, canvas, color=color)
             except KeyError:
                 # Lane not found (e.g., invalid index)
