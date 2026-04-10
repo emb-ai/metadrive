@@ -42,7 +42,6 @@ class EdgeRoadNetwork(BaseRoadNetwork):
         for lane_key in self.graph.keys():
             if not isinstance(lane_key, str) or not lane_key.startswith("lane_"):
                 continue
-
             parts = lane_key.split("_")
             if len(parts) < 3:
                 continue
@@ -55,13 +54,11 @@ class EdgeRoadNetwork(BaseRoadNetwork):
 
             if edge_id == target:
                 candidates.append((lane_key, lane_index))
-            elif edge_id == f"-{target}":
-                candidates.append((lane_key, -lane_index))
 
         if not candidates:
             return get_np_random().choice(list(self.graph.keys()))
 
-        rightmost = max(candidates, key=lambda x: x[1])
+        rightmost = min(candidates, key=lambda x: x[1])
         return rightmost[0]
 
     def get_lane(self, index: LaneIndex):
@@ -104,7 +101,7 @@ class EdgeRoadNetwork(BaseRoadNetwork):
         """
         
         lanes = [start]
-
+        lanes.extend(self.graph[start].right_lanes)
         queue = [(lane, [lane]) for lane in lanes]
         while queue:
             (lane, path) = queue.pop(0)
@@ -116,12 +113,13 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 if _next in path:
                     # circle
                     continue
-                if goal is None and len(path) > 5:
+                if goal is None and len(path) > 10:
                     yield path + [_next]
                 if _next == goal:
                     yield path + [_next]
                 elif _next in self.graph:
-                    queue.append((_next, path + [_next]))
+                    queue.append((_next, path + [_next]))  
+        yield path
 
     def get_peer_lanes_from_index(self, lane_index):
         info: lane_info = self.graph[lane_index]

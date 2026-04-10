@@ -40,6 +40,7 @@ class EdgeNetworkNavigation(BaseNavigation):
             from metadrive.utils.error_class import NavigationError
             raise NavigationError("Can't find valid lane for navigation.")
 
+        print("possible_lane_indexes:   ", possible_lane_indexes)
         if vehicle.config["spawn_lane_index"] is not None and vehicle.config["spawn_lane_index"
                                                                              ] in possible_lane_indexes:
             idx = possible_lane_indexes.index(vehicle.config["spawn_lane_index"])
@@ -49,7 +50,6 @@ class EdgeNetworkNavigation(BaseNavigation):
                 lane = vehicle_lane
             else:
                 lane = vehicle_lane
-
         dest = vehicle.config["destination"]
         current_lane = lane
         destination = dest if dest is not None else None
@@ -74,6 +74,8 @@ class EdgeNetworkNavigation(BaseNavigation):
         # update routing info
         if len(self.checkpoints) == 0:
             self.checkpoints.append(current_lane_index)
+            self.checkpoints.append(current_lane_index)
+        if len(self.checkpoints) == 1:
             self.checkpoints.append(current_lane_index)
         assert len(self.checkpoints) > 0, "Can not find a route from {} to {}".format(current_lane_index, destination)
         self.final_lane = self.map.road_network.get_lane(self.checkpoints[-1])

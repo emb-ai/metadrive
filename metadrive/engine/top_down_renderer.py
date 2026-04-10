@@ -1064,6 +1064,17 @@ class TopDownRenderer:
                 if lane_id in map_data and "polyline" in map_data[lane_id]:
                     route_points.extend(map_data[lane_id]["polyline"])
             if len(route_points) > 1:
+                if len(route_points) % 2 == 0:
+                    half = len(route_points) // 2
+                    # Проверяем, что вторая половина идентична первой (с учётом погрешности)
+                    duplicate = True
+                    for i in range(half):
+                        if abs(route_points[i][0] - route_points[half+i][0]) > 0.01 or \
+                        abs(route_points[i][1] - route_points[half+i][1]) > 0.01:
+                            duplicate = False
+                            break
+                    if duplicate:
+                        route_points = route_points[:half]
                 for i in range(len(route_points) - 1):
                     start = self._frame_canvas.pos2pix(route_points[i][0], route_points[i][1])
                     end = self._frame_canvas.pos2pix(route_points[i+1][0], route_points[i+1][1])

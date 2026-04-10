@@ -95,6 +95,9 @@ class LaneNode:
         self.index: int = sumolib_obj.getIndex()
         if len(self.edge_type.strip()) and len(self.edge_type.split('|')) > 1:
             self.type = self.edge_type.split('|')[self.index]
+        elif self.edge_type == 'highway.service':
+            # Считаем service дороги пригодными для автомобилей (для привязки знаков)
+            self.type = 'driving'
         elif (sumolib_obj.allows('pedestrian') and not sumolib_obj.allows('passenger')):
             self.type = 'sidewalk'
         elif sumolib_obj.getEdge().getFunction() == 'walkingarea':
@@ -400,19 +403,19 @@ def extract_map_features(graph):
     ret = {}
 
     # Build junction polygons (intersection areas) and their outer boundary lines
-    # for junction_id, junction in graph.junctions.items():
-    #     if len(junction.shape) <= 2:
-    #         continue
-    #     boundary_polygon = Polygon(junction.shape)
-    #     if not boundary_polygon.is_valid or boundary_polygon.is_empty:
-    #         continue
-    #     boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
-    #     id = "junction_{}".format(junction.name)
-    #     ret[id] = {
-    #         SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
-    #         SD.POLYLINE: junction.shape,
-    #         SD.POLYGON: boundary_coords,
-    #     }
+    for junction_id, junction in graph.junctions.items():
+        if len(junction.shape) <= 2:
+            continue
+        boundary_polygon = Polygon(junction.shape)
+        if not boundary_polygon.is_valid or boundary_polygon.is_empty:
+            continue
+        boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
+        id = "junction_{}".format(junction.name)
+        ret[id] = {
+            SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
+            SD.POLYLINE: junction.shape,
+            SD.POLYGON: boundary_coords,
+        }
 
     #     # Collect lane endpoints at the junction side to identify road openings
     #     lane_endpoints = []
