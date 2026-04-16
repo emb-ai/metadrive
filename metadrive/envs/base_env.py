@@ -140,7 +140,7 @@ BASE_DEFAULT_CONFIG = dict(
         # destination lane id. Required only when navigation module is not None.
         destination=None,
         # the longitudinal and lateral position on the spawn lane
-        spawn_longitude=5.0,
+        spawn_longitude=1.0,
         spawn_lateral=0.0,
 
         # If the following items is assigned, the vehicle will be spawn at the specified position with certain speed

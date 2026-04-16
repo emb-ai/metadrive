@@ -482,6 +482,8 @@ class ModifiedIDMPolicy(IDMPolicy):
     def acceleration(self, front_obj, dist_to_front) -> float:
         ego_vehicle = self.control_object
         if self.routing_target_lane:
+            if not self.routing_target_lane.speed:
+              self.routing_target_lane.speed = 5  
             base_speed = self.routing_target_lane.speed * 3.6  #车道限速
             long, _ = self.routing_target_lane.local_coordinates(self.control_object.position)
             curvature_speed = self.get_curvature_based_speed_limit(self.routing_target_lane, long, base_speed)

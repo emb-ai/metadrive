@@ -40,7 +40,6 @@ class EdgeNetworkNavigation(BaseNavigation):
             from metadrive.utils.error_class import NavigationError
             raise NavigationError("Can't find valid lane for navigation.")
 
-        print("possible_lane_indexes:   ", possible_lane_indexes)
         if vehicle.config["spawn_lane_index"] is not None and vehicle.config["spawn_lane_index"
                                                                              ] in possible_lane_indexes:
             idx = possible_lane_indexes.index(vehicle.config["spawn_lane_index"])
