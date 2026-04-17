@@ -66,6 +66,7 @@ class EdgeNetworkNavigation(BaseNavigation):
         :return: None
         """
         self.checkpoints = self.map.road_network.shortest_path(current_lane_index, destination)
+        
         # if len(self.checkpoints) == 0:
         #     self.checkpoints.append(current_lane_index)
         #     self.checkpoints.append(current_lane_index)

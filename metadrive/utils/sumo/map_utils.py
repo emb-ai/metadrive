@@ -92,15 +92,23 @@ class LaneNode:
         self.sumolib_obj: sumolib.net.lane = sumolib_obj
         self.name: str = sumolib_obj.getID()
         self.edge_type: str = sumolib_obj.getEdge().getType()
+        edge_function = sumolib_obj.getEdge().getFunction()
         self.index: int = sumolib_obj.getIndex()
         if len(self.edge_type.strip()) and len(self.edge_type.split('|')) > 1:
-            self.type = self.edge_type.split('|')[self.index]
-        elif self.edge_type == 'highway.service':
+            lane_type = self.edge_type.split('|')[self.index]
+            if lane_type in ('service', 'highway.service'):
+                self.type = 'driving'
+            else:
+                self.type = lane_type
+        elif self.edge_type in ('service', 'highway.service'):
             # Считаем service дороги пригодными для автомобилей (для привязки знаков)
+            self.type = 'driving'
+        elif edge_function == 'internal' and sumolib_obj.allows('delivery'):
+            # internal lane from service-like connections: keep routable
             self.type = 'driving'
         elif (sumolib_obj.allows('pedestrian') and not sumolib_obj.allows('passenger')):
             self.type = 'sidewalk'
-        elif sumolib_obj.getEdge().getFunction() == 'walkingarea':
+        elif edge_function == 'walkingarea':
             self.type = 'sidewalk'
         else:
             self.type = 'driving'
@@ -113,7 +121,7 @@ class LaneNode:
         self.speed: float = sumolib_obj.getSpeed()
         self.shape: LaneShape = LaneShape(sumolib_obj, self.width)
 
-        if sumolib_obj.getEdge().getFunction() == 'walkingarea':
+        if edge_function == 'walkingarea':
             shape = [[p[0], p[1]] for p in sumolib_obj.getShape()]
             shape.append(sumolib_obj.getShape()[0])
             self.shape.shape = Polygon(shape)

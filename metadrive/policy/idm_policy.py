@@ -6,6 +6,7 @@ from metadrive.policy.base_policy import BasePolicy
 from metadrive.policy.manual_control_policy import ManualControlPolicy
 from metadrive.utils.math import not_zero, wrap_to_pi, norm
 import logging
+from metadrive.component.road_network.edge_road_network import EdgeRoadNetwork
 
 from traffic_signs.stop_sign import StopSign
 
@@ -271,18 +272,27 @@ class IDMPolicy(BasePolicy):
     def move_to_next_road(self):
         # routing target lane is in current ref lanes
         current_lanes = self.control_object.navigation.current_ref_lanes
+        # print("current_lanes:   ", current_lanes)
         if self.routing_target_lane is None:
             self.routing_target_lane = self.control_object.lane
             return True if self.routing_target_lane in current_lanes else False
         routing_network = self.control_object.navigation.map.road_network
         if self.routing_target_lane not in current_lanes:
             for lane in current_lanes:
-                if self.routing_target_lane.is_previous_lane_of(lane) or \
-                        routing_network.has_connection(self.routing_target_lane.index, lane.index):
-                    # two lanes connect
-                    self.routing_target_lane = lane
-                    return True
-                    # lane change for lane num change
+                if isinstance(routing_network, EdgeRoadNetwork):
+                    print("self.control_object.navigation.checkpoints:  ", self.control_object.navigation.checkpoints)
+                    if self.routing_target_lane.is_previous_lane_of(lane) or \
+                            (self.routing_target_lane.index in self.control_object.navigation.checkpoints and \
+                            lane.index in self.control_object.navigation.checkpoints):
+                        self.routing_target_lane = lane
+                        return True
+                else:
+                    if self.routing_target_lane.is_previous_lane_of(lane) or \
+                            routing_network.has_connection(self.routing_target_lane.index, lane.index) :
+                        # two lanes connect
+                        self.routing_target_lane = lane
+                        return True
+                        # lane change for lane num change
             return False
         elif self.control_object.lane in current_lanes and self.routing_target_lane is not self.control_object.lane:
             # lateral routing lane change

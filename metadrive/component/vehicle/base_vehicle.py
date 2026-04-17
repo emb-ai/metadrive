@@ -353,7 +353,6 @@ class BaseVehicle(BaseObject, BaseVehicleState):
                     if ":" not in lane_id
                 ]
                 if len(start_entry_lanes) > 0:
-                    print("lane.entry_lanes[0]: ", start_entry_lanes[0])
                     lane =  map.road_network.get_lane(start_entry_lanes[0])
                 position = lane.position(self.config["spawn_longitude"], self.config["spawn_lateral"])
                 heading = lane.heading_theta_at(self.config["spawn_longitude"])

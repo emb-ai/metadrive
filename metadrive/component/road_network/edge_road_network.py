@@ -91,6 +91,27 @@ class EdgeRoadNetwork(BaseRoadNetwork):
     def shortest_path(self, start: str, goal: str):
         return next(self.bfs_paths(start, goal), [])
 
+    def has_connection(self, lane_index_1, lane_index_2):
+        if lane_index_1 not in self.graph or lane_index_2 not in self.graph:
+            return False
+        
+        if lane_index_1 in self.graph and lane_index_2 in self.graph:
+            return True
+        
+        lane_data = self.graph[lane_index_1]
+        print("lane_data.exit_lane: ", lane_data.exit_lanes)
+        if lane_index_2 in lane_data.exit_lanes:
+            return True
+
+        for turn in lane_data.turns or []:
+            to_lane = turn.get("to_lane")
+            via_lane = turn.get("via_lane")
+            if to_lane == lane_index_2 or via_lane == lane_index_2:
+                return True
+            if via_lane in self.graph and lane_index_2 in self.graph[via_lane].exit_lanes:
+                return True
+        return False
+
     def bfs_paths(self, start: str, goal: str) -> List[List[str]]:
             """
             Breadth-first search of all routes from start to goal.

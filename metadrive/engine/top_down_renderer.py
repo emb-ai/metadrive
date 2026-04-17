@@ -1057,27 +1057,27 @@ class TopDownRenderer:
             checkpoints = self.current_track_agent.navigation.checkpoints
             route_color = (0, 255, 0)
             route_width = 3
-            map_data = self.map.blocks[-1].map_data
-            route_points = []
+            map_data = {}
+            for block in getattr(self.map, "blocks", []):
+                if hasattr(block, "map_data") and isinstance(block.map_data, dict):
+                    map_data.update(block.map_data)
 
             for lane_id in checkpoints:
-                if lane_id in map_data and "polyline" in map_data[lane_id]:
-                    route_points.extend(map_data[lane_id]["polyline"])
-            if len(route_points) > 1:
-                if len(route_points) % 2 == 0:
-                    half = len(route_points) // 2
-                    # Проверяем, что вторая половина идентична первой (с учётом погрешности)
-                    duplicate = True
-                    for i in range(half):
-                        if abs(route_points[i][0] - route_points[half+i][0]) > 0.01 or \
-                        abs(route_points[i][1] - route_points[half+i][1]) > 0.01:
-                            duplicate = False
-                            break
-                    if duplicate:
-                        route_points = route_points[:half]
-                for i in range(len(route_points) - 1):
-                    start = self._frame_canvas.pos2pix(route_points[i][0], route_points[i][1])
-                    end = self._frame_canvas.pos2pix(route_points[i+1][0], route_points[i+1][1])
+                lane_info = map_data.get(lane_id)
+                if lane_info is None:
+                    continue
+                polyline = lane_info.get("polyline")
+                if polyline is None or len(polyline) == 0:
+                    continue
+
+                if len(polyline) == 1:
+                    p = self._frame_canvas.pos2pix(polyline[0][0], polyline[0][1])
+                    pygame.draw.circle(self._frame_canvas, route_color, p, max(2, route_width))
+                    continue
+
+                for i in range(len(polyline) - 1):
+                    start = self._frame_canvas.pos2pix(polyline[i][0], polyline[i][1])
+                    end = self._frame_canvas.pos2pix(polyline[i + 1][0], polyline[i + 1][1])
                     pygame.draw.line(self._frame_canvas, route_color, start, end, route_width)
 
         if hasattr(self.engine, 'traffic_sign_manager'):
