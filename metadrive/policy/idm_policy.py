@@ -90,7 +90,17 @@ class FrontBackObjects:
         """
         if ref_lanes is not None:
             assert lane in ref_lanes
-        idx = lane.index[-1] if ref_lanes is not None else None
+        idx = None
+        if ref_lanes is not None:
+            lane_idx_val = None
+            try:
+                lane_idx_val = lane.index[-1]
+            except Exception:
+                lane_idx_val = None
+            if isinstance(lane_idx_val, int):
+                idx = lane_idx_val
+            else:
+                idx = ref_lanes.index(lane)
         left_lane = ref_lanes[idx - 1] if ref_lanes is not None and idx > 0 else None
         right_lane = ref_lanes[idx + 1] if ref_lanes is not None and idx + 1 < len(ref_lanes) else None
         lanes = [left_lane, lane, right_lane]
@@ -231,6 +241,7 @@ class IDMPolicy(BasePolicy):
         self.available_routing_index_range = None
         self.overtake_timer = self.np_random.randint(0, self.LANE_CHANGE_FREQ)
         self.enable_lane_change = self.engine.global_config.get("enable_idm_lane_change", True)
+        self.enable_idm_overtake = self.engine.global_config.get("enable_idm_overtake", False)
         self.disable_idm_deceleration = self.engine.global_config.get("disable_idm_deceleration", False)
         self.heading_pid = PIDController(1.7, 0.01, 3.5)
         self.lateral_pid = PIDController(0.3, .002, 0.05)
@@ -397,7 +408,7 @@ class IDMPolicy(BasePolicy):
                                current_lanes[self.routing_target_lane.index[-1] + 1]
 
         # lane follow or active change lane/overtake for high driving speed
-        if abs(self.control_object.speed_km_h - self.NORMAL_SPEED) > 3 and surrounding_objects.has_front_object(
+        if self.enable_idm_overtake and abs(self.control_object.speed_km_h - self.NORMAL_SPEED) > 3 and surrounding_objects.has_front_object(
         ) and abs(surrounding_objects.front_object().speed_km_h -
                   self.NORMAL_SPEED) > 3 and self.overtake_timer > self.LANE_CHANGE_FREQ:
             # may lane change
@@ -424,8 +435,12 @@ class IDMPolicy(BasePolicy):
 
 
 class ModifiedIDMPolicy(IDMPolicy):
+    INTERSECTION_SCAN_RADIUS = 7.0
+    INTERSECTION_HALF_ANGLE = np.pi / 3
+    LEADER_STICK_DIST = 20.0
+
     def __init__(self, control_object, random_seed):
-        super(IDMPolicy, self).__init__(control_object=control_object, random_seed=random_seed)
+        super(ModifiedIDMPolicy, self).__init__(control_object=control_object, random_seed=random_seed)
         self.target_speed = self.NORMAL_SPEED
         self.routing_target_lane = None
         self.available_routing_index_range = None
@@ -437,7 +452,8 @@ class ModifiedIDMPolicy(IDMPolicy):
         self.waiting_at_stop_sign = False
         self.stop_sign_wait_time = 0.0
         self.stop_sign_total_wait = 1.0
-        self.has_stopped_at_stop_sign = False 
+        self.has_stopped_at_stop_sign = False
+        self._last_leader = None
     
     def _find_relevant_stop_sign(self):
         """
@@ -537,6 +553,120 @@ class ModifiedIDMPolicy(IDMPolicy):
             speed_diff = self.desired_gap(ego_vehicle, front_obj) / not_zero(d)
             acceleration -= self.ACC_FACTOR * (speed_diff**2)
         return acceleration
+
+    def _find_crossing_obstacle(self, all_objects):
+        ego = self.control_object
+        ego_pos = ego.position
+        ego_heading = ego.heading_theta
+
+        best_obj = None
+        best_dist = self.INTERSECTION_SCAN_RADIUS
+
+        for obj in all_objects:
+            if obj is ego:
+                continue
+            dx = obj.position[0] - ego_pos[0]
+            dy = obj.position[1] - ego_pos[1]
+            dist = norm(dx, dy)
+            if dist > self.INTERSECTION_SCAN_RADIUS or dist < 1.0:
+                continue
+
+            angle_to_obj = np.arctan2(dy, dx)
+            angle_diff = abs(wrap_to_pi(angle_to_obj - ego_heading))
+            if angle_diff > self.INTERSECTION_HALF_ANGLE:
+                continue
+
+            if dist < best_dist:
+                best_dist = dist
+                best_obj = obj
+
+        return best_obj, best_dist
+
+    @staticmethod
+    def _lane_is_internal(lane) -> bool:
+        lane_idx = getattr(lane, "index", None)
+        return isinstance(lane_idx, str) and ":" in lane_idx
+
+    def _is_intersection_context(self) -> bool:
+        if self._lane_is_internal(self.routing_target_lane):
+            return True
+        ego_lane = getattr(self.control_object, "lane", None)
+        if self._lane_is_internal(ego_lane):
+            return True
+        return False
+
+    def act(self, *args, **kwargs):
+        success = self.move_to_next_road()
+        all_objects = self.control_object.lidar.get_surrounding_objects(self.control_object)
+        try:
+            chosen_front_obj = None
+            chosen_front_dist = self.MAX_LONG_DIST
+
+            if success and self.enable_lane_change:
+                acc_front_obj, acc_front_dist, steering_target_lane = self.lane_change_policy(all_objects)
+            else:
+                surrounding_objects = FrontBackObjects.get_find_front_back_objs(
+                    all_objects,
+                    self.routing_target_lane,
+                    self.control_object.position,
+                    max_distance=self.MAX_LONG_DIST
+                )
+                acc_front_obj = surrounding_objects.front_object()
+                acc_front_dist = surrounding_objects.front_min_distance()
+                steering_target_lane = self.routing_target_lane
+            chosen_front_obj, chosen_front_dist = acc_front_obj, acc_front_dist
+
+            # Always keep a robust same-lane front check to avoid rear-end crashes
+            # when lane-change context is noisy on edge/service maps.
+            single_lane_objs = FrontBackObjects.get_find_front_back_objs_single_lane(
+                all_objects,
+                self.routing_target_lane,
+                self.control_object.position,
+                max_distance=self.MAX_LONG_DIST
+            )
+            single_front_obj = single_lane_objs.front_object()
+            single_front_dist = single_lane_objs.front_min_distance()
+            if single_front_obj is not None and single_front_dist < acc_front_dist:
+                ego_heading = self.control_object.heading_theta
+                front_heading = getattr(single_front_obj, "heading_theta", ego_heading)
+                same_direction = abs(wrap_to_pi(front_heading - ego_heading)) < np.pi / 2
+                if same_direction:
+                    acc_front_obj = single_front_obj
+                    acc_front_dist = single_front_dist
+
+            # Leader stickiness: if previous leader is still near and roughly ahead,
+            # keep braking for it for a short distance while it changes lane.
+            if self._last_leader is not None and self._last_leader in all_objects:
+                leader = self._last_leader
+                dx = leader.position[0] - self.control_object.position[0]
+                dy = leader.position[1] - self.control_object.position[1]
+                leader_dist = norm(dx, dy)
+                if leader_dist < self.LEADER_STICK_DIST:
+                    ego_heading = self.control_object.heading_theta
+                    angle_to_leader = np.arctan2(dy, dx)
+                    if abs(wrap_to_pi(angle_to_leader - ego_heading)) < np.pi / 2:
+                        if leader_dist < acc_front_dist:
+                            acc_front_obj = leader
+                            acc_front_dist = leader_dist
+
+            if self._is_intersection_context():
+                crossing_obj, crossing_dist = self._find_crossing_obstacle(all_objects)
+                if crossing_obj is not None and crossing_dist < acc_front_dist:
+                    acc_front_obj = crossing_obj
+                    acc_front_dist = crossing_dist
+
+            self._last_leader = acc_front_obj
+        except Exception:
+            acc_front_obj = None
+            acc_front_dist = self.MAX_LONG_DIST
+            steering_target_lane = self.routing_target_lane
+            self._last_leader = None
+
+        steering = self.steering_control(steering_target_lane)
+        acc = self.acceleration(acc_front_obj, acc_front_dist)
+        action = [steering, acc]
+        self.action_info["action"] = action
+        return action
     
     def lane_change_policy(self, all_objects):
         current_lanes = self.control_object.navigation.current_ref_lanes
