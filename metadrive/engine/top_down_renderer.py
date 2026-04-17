@@ -400,6 +400,10 @@ def draw_top_down_map_native(
                     points_to_skip = math.floor(PGDrivableAreaProperty.STRIPE_LENGTH * 2 / line_sample_interval) * 2
                 else:
                     points_to_skip = 1
+                # Yellow (axial) dividers render at 1x lane_line_width; others at 2x.
+                _is_yellow = MetaDriveType.is_yellow_line(obj["type"])
+                _lw = surface.pix(PGDrivableAreaProperty.LANE_LINE_WIDTH)
+                _width = max(1, _lw if _is_yellow else _lw * 2)
                 for index in range(0, len(polyline) - 1, points_to_skip):
                     color = [255, 0, 0] if MetaDriveType.is_lane(obj["type"]) and index==0\
                         else TopDownSemanticColor.get_color(obj["type"])
@@ -411,8 +415,7 @@ def draw_top_down_map_native(
                             color,
                             surface.vec2pix([s_p[0], s_p[1]]),
                             surface.vec2pix([e_p[0], e_p[1]]),
-                            # max(surface.pix(LaneGraphics.STRIPE_WIDTH),
-                            surface.pix(PGDrivableAreaProperty.LANE_LINE_WIDTH) * 2
+                            _width
                         )
     else:
         if isinstance(map, ScenarioMap):
@@ -442,8 +445,10 @@ def draw_top_down_map_native(
     show_crosswalk = True
     engine = getattr(map, "engine", None)
     no_stop_before_m = 5.0
+    zebra_in_semantic = True
     if engine is not None:
         show_crosswalk = bool(engine.global_config.get("show_crosswalk", True))
+        zebra_in_semantic = bool(engine.global_config.get("crosswalk_zebra_in_semantic", True))
         ped_cfg = engine.global_config.get("pedestrian_manager", {})
         if hasattr(ped_cfg, "get_dict"):
             ped_cfg = ped_cfg.get_dict()
@@ -459,11 +464,11 @@ def draw_top_down_map_native(
             quad_world = _crosswalk_reference_quad(polygon)
             pts = [surface.pos2pix(p[0], p[1]) for p in polygon]
 
-            if semantic_map:
-                # Semantic mode: keep class color.
+            if semantic_map and not zebra_in_semantic:
+                # Semantic mode (legacy): single class color.
                 pygame.draw.polygon(surface, TopDownSemanticColor.get_color(MetaDriveType.CROSSWALK), pts)
             else:
-                # Non-semantic mode: draw yellow/white zebra crossing.
+                # Draw yellow/white zebra crossing (also in semantic mode by default).
                 pygame.draw.polygon(surface, CROSSWALK_BG_COLOR, pts)
                 if quad_world is not None:
                     quad_pts = [surface.pos2pix(p[0], p[1]) for p in quad_world]
@@ -1005,10 +1010,11 @@ class TopDownRenderer:
 
         # Create surfaces from raw icons if not already created
         # Only create surfaces for icons that are not yet created
+        icon_px = max(int(24 * self.scaling / 5.0), 12)
         for name, img in self.sign_icon_raw.items():
-            if name not in self.sign_icon_surfaces:
+            if name not in self.sign_icon_surfaces or getattr(self, '_last_icon_px', 0) != icon_px:
                 try:
-                    scaled = pygame.transform.smoothscale(img, (24, 24))
+                    scaled = pygame.transform.smoothscale(img, (icon_px, icon_px))
                     # Check if scaled image is valid
                     if scaled.get_size()[0] > 0 and scaled.get_size()[1] > 0:
                         # For images without alpha (like JPG), convert to surface with alpha
@@ -1025,6 +1031,7 @@ class TopDownRenderer:
                             self.sign_icon_surfaces[name] = scaled
                 except Exception as e:
                     print(f"Failed to create surface for {name}: {e}")
+        self._last_icon_px = icon_px
 
         if (self.current_track_agent is not None and
             hasattr(self.current_track_agent, 'navigation') and
@@ -1091,18 +1098,7 @@ class TopDownRenderer:
                     continue
 
                 if sign_type == "TrafficLightSign":
-                    if hasattr(sign, 'position') and hasattr(sign, 'top_down_color'):
-                        pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
-
-                        color = sign.top_down_color
-
-                        radius = 8
-                        pygame.draw.circle(
-                            surface=self._frame_canvas,
-                            color=color,
-                            center=(pixel_x, pixel_y),
-                            radius=radius
-                        )
+                    continue  # drawn below in grouped TL pass
 
                 icon = self.sign_icon_surfaces.get(sign_type)
 
@@ -1123,6 +1119,126 @@ class TopDownRenderer:
                             self._frame_canvas.blit(draw_icon, rect)
                     except Exception:
                         pass
+
+        # --- Traffic light rendering: one cluster per approach edge ---
+        # SUMO splits a physical road into edge#0/#1/... segments - we collapse those
+        # so adjacent segments on the same approach render as a single cluster.
+        # Per-lane direction info (S/L/R/U) is merged and de-duplicated.
+        if hasattr(self.engine, 'traffic_sign_manager'):
+            import math
+            tl_by_road = {}
+            for sign in self.engine.traffic_sign_manager.signs:
+                if sign is None or type(sign).__name__ != "TrafficLightSign":
+                    continue
+                if not hasattr(sign, 'position'):
+                    continue
+                lane_idx = getattr(sign.lane, "index", None)
+                if lane_idx is None:
+                    continue
+                # Collapse SUMO edge segments: "lane_-241#3_0" -> "lane_-241".
+                if isinstance(lane_idx, (tuple, list)) and len(lane_idx) >= 2:
+                    road_key = (lane_idx[0], lane_idx[1])
+                elif isinstance(lane_idx, str):
+                    raw = lane_idx[5:] if lane_idx.startswith("lane_") else lane_idx
+                    edge_id = raw.rsplit("_", 1)[0].split("#", 1)[0]
+                    road_key = "lane_" + edge_id
+                else:
+                    continue
+                per_dir = sign.get_per_direction_info() if hasattr(sign, 'get_per_direction_info') else []
+                heading = getattr(sign.lane, 'heading_theta_at', lambda x: 0)(sign.lane.length)
+                try:
+                    lane_end_pos = sign.lane.position(sign.lane.length, 0)
+                except Exception:
+                    lane_end_pos = sign.position
+                entry = tl_by_road.get(road_key)
+                if entry is None:
+                    tl_by_road[road_key] = [[lane_end_pos], heading, list(per_dir)]
+                else:
+                    entry[0].append(lane_end_pos)
+                    entry[2].extend(per_dir)
+
+            # Spatial merge + heading gate: merge only same-approach-side clusters
+            # (headings within MERGE_HEADING_RAD), not opposing flows. Then pull the
+            # dot BACK along the approach direction by TL_BACK_OFFSET_M so it sits on
+            # the driving lane, not in the junction.
+            # Tight thresholds: only SUMO edge-split segments (same physical road) should
+            # collapse; do not merge across distinct approaches/roadways.
+            MERGE_DIST_M = 4.0
+            MERGE_HEADING_RAD = math.radians(20.0)
+            TL_BACK_OFFSET_M = 3.0
+            merged_clusters = []  # list of [pos, heading, dirs]
+
+            def _ang_diff(a, b):
+                d = (a - b + math.pi) % (2 * math.pi) - math.pi
+                return abs(d)
+
+            for _road_key, (positions, heading, dirs) in tl_by_road.items():
+                if not dirs:
+                    continue
+                pos = [
+                    sum(p[0] for p in positions) / len(positions),
+                    sum(p[1] for p in positions) / len(positions),
+                ]
+                merged_idx = None
+                for i, (mp, mh, _md) in enumerate(merged_clusters):
+                    dist_ok = (mp[0] - pos[0]) ** 2 + (mp[1] - pos[1]) ** 2 <= MERGE_DIST_M ** 2
+                    heading_ok = _ang_diff(heading, mh) <= MERGE_HEADING_RAD
+                    if dist_ok and heading_ok:
+                        merged_idx = i
+                        break
+                if merged_idx is None:
+                    merged_clusters.append([pos, heading, list(dirs)])
+                else:
+                    mp = merged_clusters[merged_idx][0]
+                    n_existing = len(merged_clusters[merged_idx][2]) or 1
+                    mp[0] = (mp[0] * n_existing + pos[0]) / (n_existing + 1)
+                    mp[1] = (mp[1] * n_existing + pos[1]) / (n_existing + 1)
+                    merged_clusters[merged_idx][2].extend(dirs)
+
+            # Pull each cluster back into its own approach lane (away from junction).
+            for c in merged_clusters:
+                pos, heading, _ = c
+                pos[0] -= TL_BACK_OFFSET_M * math.cos(heading)
+                pos[1] -= TL_BACK_OFFSET_M * math.sin(heading)
+
+            if not pygame.font.get_init():
+                pygame.font.init()
+            scale = max(self.scaling / 5.0, 0.5)
+            small_r = max(int(4 * scale), 3)
+            small_font_size = max(int(7 * scale), 5)
+            tl_font = pygame.font.SysFont('Arial', small_font_size, bold=True)
+            border = max(int(1 * scale), 1)
+            gap = max(int(1 * scale), 1)
+            dir_labels = {'s': 'S', 'r': 'R', 'l': 'L', 'R': 'R', 'L': 'L', 't': 'U', '?': '?'}
+            color_pri = lambda c: 2 if c == [255, 0, 0] else (1 if c == [255, 255, 0] else 0)
+
+            for pos, heading, dirs in merged_clusters:
+                # De-duplicate by VISIBLE label (L merges 'l' partial + 'L' full,
+                # R merges 'r' + 'R'). Keep dominant color per label.
+                best_by_label = {}
+                for d, c in dirs:
+                    lbl = dir_labels.get(d, d)
+                    if lbl not in best_by_label or color_pri(c) > color_pri(best_by_label[lbl][1]):
+                        best_by_label[lbl] = (d, c)
+                unique_dirs = [(d, c) for d, c in best_by_label.values()]
+                order = {'r': 0, 'R': 0, 's': 1, '?': 2, 'l': 3, 'L': 3, 't': 4}
+                unique_dirs.sort(key=lambda x: order.get(x[0], 3))
+
+                pixel_x, pixel_y = self._frame_canvas.pos2pix(pos[0], pos[1])
+                n = len(unique_dirs)
+                spacing = small_r * 2 + gap
+                perp = heading + math.pi / 2
+                dx, dy = math.cos(perp), math.sin(perp)
+                for i, (d, c) in enumerate(unique_dirs):
+                    offset = (i - (n - 1) / 2.0) * spacing
+                    cx = int(pixel_x + dx * offset)
+                    cy = int(pixel_y - dy * offset)
+                    pygame.draw.circle(self._frame_canvas, c, (cx, cy), small_r)
+                    pygame.draw.circle(self._frame_canvas, (30, 30, 30), (cx, cy), small_r, border)
+                    label = dir_labels.get(d, d)
+                    text_surf = tl_font.render(label, True, (255, 255, 255))
+                    trect = text_surf.get_rect(center=(cx, cy))
+                    self._frame_canvas.blit(text_surf, trect)
 
         v = self.current_track_agent
         canvas = self._frame_canvas

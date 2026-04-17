@@ -347,13 +347,16 @@ class BaseVehicle(BaseObject, BaseVehicleState):
                 else:
                     lane_key = self.config["spawn_lane_index"]
                 lane = map.road_network.get_lane(lane_key)
+                # PGMap lanes (StraightLane/CircularLane) don't have entry_lanes;
+                # only EdgeRoadNetwork lanes (SUMO) do. Default to [] so we skip
+                # the follow-up lookup on PG maps.
                 start_entry_lanes = [
                     lane_id
-                    for lane_id in lane.entry_lanes
+                    for lane_id in getattr(lane, "entry_lanes", [])
                     if ":" not in lane_id
                 ]
                 if len(start_entry_lanes) > 0:
-                    lane =  map.road_network.get_lane(start_entry_lanes[0])
+                    lane = map.road_network.get_lane(start_entry_lanes[0])
                 position = lane.position(self.config["spawn_longitude"], self.config["spawn_lateral"])
                 heading = lane.heading_theta_at(self.config["spawn_longitude"])
         else:

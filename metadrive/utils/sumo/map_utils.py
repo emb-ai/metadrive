@@ -112,6 +112,19 @@ class LaneNode:
             self.type = 'sidewalk'
         else:
             self.type = 'driving'
+
+        # Normalize driving-like OSM highway categories to 'driving' so service/
+        # residential/track/unclassified roads get rendered and bind signs.
+        if self.type.startswith('highway.') and self.type not in (
+            'highway.footway', 'highway.path', 'highway.pedestrian', 'highway.steps',
+        ):
+            # Exclude pedestrian-only variants; fall through to 'sidewalk' if allowed.
+            if sumolib_obj.allows('passenger'):
+                self.type = 'driving'
+            elif sumolib_obj.allows('pedestrian'):
+                self.type = 'sidewalk'
+            else:
+                self.type = 'driving'
         raw_width = sumolib_obj.getWidth()
         if self.type == 'driving' and LaneNode.MIN_LANE_WIDTH > 0:
             self.width: float = max(raw_width, LaneNode.MIN_LANE_WIDTH)
@@ -411,19 +424,19 @@ def extract_map_features(graph):
     ret = {}
 
     # Build junction polygons (intersection areas) and their outer boundary lines
-    for junction_id, junction in graph.junctions.items():
-        if len(junction.shape) <= 2:
-            continue
-        boundary_polygon = Polygon(junction.shape)
-        if not boundary_polygon.is_valid or boundary_polygon.is_empty:
-            continue
-        boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
-        id = "junction_{}".format(junction.name)
-        ret[id] = {
-            SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
-            SD.POLYLINE: junction.shape,
-            SD.POLYGON: boundary_coords,
-        }
+    # for junction_id, junction in graph.junctions.items():
+    #     if len(junction.shape) <= 2:
+    #         continue
+    #     boundary_polygon = Polygon(junction.shape)
+    #     if not boundary_polygon.is_valid or boundary_polygon.is_empty:
+    #         continue
+    #     boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
+    #     id = "junction_{}".format(junction.name)
+    #     ret[id] = {
+    #         SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
+    #         SD.POLYLINE: junction.shape,
+    #         SD.POLYGON: boundary_coords,
+    #     }
 
     #     # Collect lane endpoints at the junction side to identify road openings
     #     lane_endpoints = []
@@ -598,7 +611,18 @@ def extract_map_features(graph):
         id = "lane_divider_{}".format(lane_divider_id)
         ret[id] = {SD.TYPE: MetaDriveType.LINE_BROKEN_SINGLE_WHITE, SD.POLYLINE: lane_divider}
 
+    # edge_dividers between opposing flows (solid yellow axial line).
+    # Short stray dividers (< EDGE_DIVIDER_MIN_LENGTH_M) are dropped as geometric artefacts.
+    # Episode-end on chassis contact is disabled env-side (see TrafficSignSumoEnv._is_out_of_road).
+    EDGE_DIVIDER_MIN_LENGTH_M = 3.0
     for edge_divider_id, edge_divider in enumerate(graph.edge_dividers):
+        pts = np.asarray(edge_divider, dtype=np.float64)
+        if pts.ndim != 2 or pts.shape[0] < 2:
+            continue
+        seg_lens = np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1)
+        total_len = float(np.sum(seg_lens))
+        if total_len < EDGE_DIVIDER_MIN_LENGTH_M:
+            continue
         id = "edge_divider_{}".format(edge_divider_id)
         ret[id] = {SD.TYPE: MetaDriveType.LINE_SOLID_SINGLE_YELLOW, SD.POLYLINE: edge_divider}
 
