@@ -1098,7 +1098,31 @@ class TopDownRenderer:
                     continue
 
                 if sign_type == "TrafficLightSign":
-                    continue  # drawn below in grouped TL pass
+                    # Per-sign TL: colored circle + direction letter (S/R/L/U)
+                    # No grouping — each TrafficLightSign drawn independently.
+                    if hasattr(sign, 'position'):
+                        pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
+                        per_dir = sign.get_per_direction_info() if hasattr(sign, 'get_per_direction_info') else []
+                        if per_dir:
+                            dir_labels = {'s': 'S', 'r': 'R', 'l': 'L', 'R': 'R', 'L': 'L', 't': 'U', '?': '?'}
+                            scale = max(self.scaling / 5.0, 0.5)
+                            r = max(int(4 * scale), 3)
+                            if not pygame.font.get_init():
+                                pygame.font.init()
+                            font = pygame.font.SysFont('Arial', max(int(7 * scale), 5), bold=True)
+                            for i, (d, c) in enumerate(per_dir):
+                                cx = pixel_x + i * (r * 2 + 2) - len(per_dir) * r
+                                cy = pixel_y
+                                pygame.draw.circle(self._frame_canvas, c, (int(cx), int(cy)), r)
+                                pygame.draw.circle(self._frame_canvas, (0, 0, 0), (int(cx), int(cy)), r, 1)
+                                lbl = dir_labels.get(d, d)
+                                txt = font.render(lbl, True, (255, 255, 255))
+                                self._frame_canvas.blit(txt, txt.get_rect(center=(int(cx), int(cy))))
+                        elif hasattr(sign, 'top_down_color'):
+                            # Fallback: simple circle if no direction info
+                            pygame.draw.circle(self._frame_canvas, sign.top_down_color,
+                                               (pixel_x, pixel_y), 8)
+                    continue
 
                 icon = self.sign_icon_surfaces.get(sign_type)
 
@@ -1120,11 +1144,13 @@ class TopDownRenderer:
                     except Exception:
                         pass
 
-        # --- Traffic light rendering: one cluster per approach edge ---
-        # SUMO splits a physical road into edge#0/#1/... segments - we collapse those
-        # so adjacent segments on the same approach render as a single cluster.
+        # --- Grouped traffic light rendering (COMMENTED OUT — using simple circles above) ---
+        # To re-enable: uncomment this block and change "continue" above to
+        # "continue  # drawn below in grouped TL pass"
+        # --- Grouped traffic light rendering (DISABLED — using simple circles above) ---
+        # To re-enable: change `if False and` to `if` below.
         # Per-lane direction info (S/L/R/U) is merged and de-duplicated.
-        if hasattr(self.engine, 'traffic_sign_manager'):
+        if False and hasattr(self.engine, 'traffic_sign_manager'):
             import math
             tl_by_road = {}
             for sign in self.engine.traffic_sign_manager.signs:
