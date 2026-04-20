@@ -56,6 +56,8 @@ class ScenarioLane(PointLane):
         self.turns = map_data[lane_id].get(ScenarioDescription.TURNS, None)
         self.tl_signals = map_data[lane_id].get(ScenarioDescription.TL_SIGNALS, None)
         self.speed = map_data[lane_id].get(ScenarioDescription.SPEED, None)
+        self.incoming_junction_id = map_data[lane_id].get("incoming_junction_id", None)
+        self.incoming_junction_lanes = map_data[lane_id].get("incoming_junction_lanes", None)
         # print("self.tl_signals: ", self.tl_signals)
 
     @staticmethod
@@ -141,6 +143,8 @@ class ScenarioLane(PointLane):
         self.turns = None
         self.tl_signals = None
         self.speed = None 
+        self.incoming_junction_id = None
+        self.incoming_junction_lanes = None
         super(ScenarioLane, self).destroy()
 
 
