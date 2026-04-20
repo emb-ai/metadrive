@@ -29,6 +29,11 @@ CROSSWALK_STRIPE_GAP_RATIO = 0.18
 CROSSWALK_MIN_STRIPE_COUNT = 4
 CROSSWALK_STOP_LINE_COLOR = (0, 0, 0)
 CROSSWALK_STOP_LINE_WIDTH_PX = 3
+PRIORITY_MAIN_FILL = (246, 213, 73)
+PRIORITY_MAIN_BORDER = (255, 255, 255)
+PRIORITY_MAIN_OUTLINE = (20, 20, 20)
+PRIORITY_YIELD_FILL = (255, 255, 255)
+PRIORITY_YIELD_BORDER = (210, 32, 32)
 
 
 def _uturn_side_from_dest(src_x, src_y, heading, dest_polyline):
@@ -74,20 +79,11 @@ def _draw_lane_thin_arrows(surface, map_data):
 
         dirs = [t["direction"] for t in turns]
 
-        end_x, end_y = float(polyline[-1][0]), float(polyline[-1][1])
-        prev_x, prev_y = float(polyline[-2][0]), float(polyline[-2][1])
-        lane_heading = math.atan2(end_y - prev_y, end_x - prev_x)
+        anchor = _lane_arrow_anchor(polyline)
+        if anchor is None:
+            continue
+        ax, ay, lane_heading = anchor
         lane_width = data.get("width", 3.5)
-
-        pullback = 6.0
-        dx, dy = end_x - prev_x, end_y - prev_y
-        seg_len = math.hypot(dx, dy)
-        if seg_len > 1e-6:
-            frac = min(pullback / seg_len, 0.9)
-            ax = end_x - dx * frac
-            ay = end_y - dy * frac
-        else:
-            ax, ay = end_x, end_y
 
         # u-turn side
         uturn_side = +1
@@ -103,6 +99,118 @@ def _draw_lane_thin_arrows(surface, map_data):
 
         _draw_thin_arrows_at(surface, ax, ay, lane_heading, dirs, lane_width,
                              uturn_side=uturn_side)
+
+
+def _lane_arrow_anchor(polyline, pullback=6.0):
+    if polyline is None or len(polyline) < 2:
+        return None
+    end_x, end_y = float(polyline[-1][0]), float(polyline[-1][1])
+    prev_x, prev_y = float(polyline[-2][0]), float(polyline[-2][1])
+    dx, dy = end_x - prev_x, end_y - prev_y
+    seg_len = math.hypot(dx, dy)
+    if seg_len <= 1e-6:
+        return None
+    lane_heading = math.atan2(dy, dx)
+    frac = min(pullback / seg_len, 0.9)
+    ax = end_x - dx * frac
+    ay = end_y - dy * frac
+    return ax, ay, lane_heading
+
+
+def _lane_priority_kind(turns):
+    """Return lane-level priority sign kind from SUMO turn priorities."""
+    uncontrolled_turns = [
+        t for t in turns
+        if t.get("junction_type") in ("priority", "right_before_left")
+    ]
+    if not uncontrolled_turns:
+        return None
+
+    has_any_priority = False
+    must_yield = False
+    for turn in uncontrolled_turns:
+        p = turn.get("priority")
+        if not isinstance(p, dict):
+            continue
+        has_any_priority = True
+        if not bool(p.get("has_priority", False)):
+            must_yield = True
+            break
+    if not has_any_priority:
+        return None
+    return "yield" if must_yield else "main"
+
+
+def _draw_priority_sign(surface, center_px, center_py, sign_kind, size_px):
+    if sign_kind == "main":
+        half_outer = size_px
+        half_mid = max(2, int(round(half_outer * 0.78)))
+        half_inner = max(1, int(round(half_outer * 0.58)))
+        outer = [
+            (center_px, center_py - half_outer),
+            (center_px + half_outer, center_py),
+            (center_px, center_py + half_outer),
+            (center_px - half_outer, center_py),
+        ]
+        mid = [
+            (center_px, center_py - half_mid),
+            (center_px + half_mid, center_py),
+            (center_px, center_py + half_mid),
+            (center_px - half_mid, center_py),
+        ]
+        inner = [
+            (center_px, center_py - half_inner),
+            (center_px + half_inner, center_py),
+            (center_px, center_py + half_inner),
+            (center_px - half_inner, center_py),
+        ]
+        pygame.draw.polygon(surface, PRIORITY_MAIN_OUTLINE, outer)
+        pygame.draw.polygon(surface, PRIORITY_MAIN_BORDER, mid)
+        pygame.draw.polygon(surface, PRIORITY_MAIN_FILL, inner)
+        return
+
+    # "Yield" sign: inverted white triangle with red border.
+    half = size_px
+    h = half * math.sqrt(3)
+    p_top_left = (center_px - half, center_py - h / 2.0)
+    p_top_right = (center_px + half, center_py - h / 2.0)
+    p_bottom = (center_px, center_py + h / 2.0)
+    outer = [p_top_left, p_top_right, p_bottom]
+    inset = max(1.5, half * 0.26)
+    inner = [
+        (center_px - (half - inset), center_py - (h / 2.0 - inset * 0.9)),
+        (center_px + (half - inset), center_py - (h / 2.0 - inset * 0.9)),
+        (center_px, center_py + (h / 2.0 - inset * 1.25)),
+    ]
+    pygame.draw.polygon(surface, PRIORITY_YIELD_BORDER, outer)
+    pygame.draw.polygon(surface, PRIORITY_YIELD_FILL, inner)
+
+
+def _draw_lane_priority_signs(surface, map_data):
+    """Draw lane-level priority signs near incoming junction approaches."""
+    for feat_id, data in map_data.items():
+        feat_type = data.get("type")
+        if feat_type is None or not MetaDriveType.is_lane(feat_type):
+            continue
+        raw_lane_id = feat_id[5:] if feat_id.startswith("lane_") else feat_id
+        if ":" in raw_lane_id:
+            continue
+
+        turns = data.get("turns")
+        if not isinstance(turns, list) or len(turns) == 0:
+            continue
+        sign_kind = _lane_priority_kind(turns)
+        if sign_kind is None:
+            continue
+
+        polyline = data.get("polyline")
+        anchor = _lane_arrow_anchor(polyline)
+        if anchor is None:
+            continue
+        sx, sy, _ = anchor
+        px, py = surface.pos2pix(sx, sy)
+        size_px = max(5, int(round(surface.scaling * 0.65)))
+        _draw_priority_sign(surface, px, py, sign_kind, size_px)
 
 
 def _draw_thin_arrows_at(surface, world_x, world_y, heading, dirs, lane_width,
@@ -518,6 +626,9 @@ def draw_top_down_map_native(
                         width = max(CROSSWALK_STOP_LINE_WIDTH_PX, surface.pix(PGDrivableAreaProperty.LANE_LINE_WIDTH))
                         pygame.draw.line(surface, CROSSWALK_STOP_LINE_COLOR, p1, p2, width)
                         pygame.draw.line(surface, CROSSWALK_STOP_LINE_COLOR, p3, p4, width)
+
+    if semantic_map:
+        _draw_lane_priority_signs(surface, all_lanes)
 
     return surface if return_surface else WorldSurface.to_cv2_image(surface)
 
