@@ -91,6 +91,7 @@ def collect_objects_ego_frame(
     max_distance=50.0,
     range_factor_front=2.0,
     tl_stop_radius=30.0,
+    include_stop_signs=True,
 ):
     """
     Собрать объекты в ego frame. PlanT2: TL только Red/Yellow (affects_ego), stop только affects_ego.
@@ -119,7 +120,9 @@ def collect_objects_ego_frame(
             status = getattr(obj, "status", MetaDriveType.LIGHT_UNKNOWN)
             if status not in (MetaDriveType.LIGHT_RED, MetaDriveType.LIGHT_YELLOW):
                 return
-        # Stop sign: в MetaDrive нет явного stop_sign; пропускаем если бы был
+        # Optional stop-sign exclusion for ablation/debug.
+        if t == OBJ_TYPE_STOP_SIGN and not include_stop_signs:
+            return
 
         if not _passes_distance_filter(x, y, t, max_distance, range_factor_front, tl_stop_radius):
             return
@@ -344,8 +347,17 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
                             right_offset = -perpendicular * (width / 2)
                             
                             for offset, line_type in [(left_offset, 'left'), (right_offset, 'right')]:
-                                # Получаем линию (как правило, все линии в EdgeRoadNetwork - сплошные)
-                                idx = BEV_IDX_ALL_LINES  # В SUMO обычно сплошные линии
+                                # Use divider metadata when available.
+                                # Fallback to solid lines for lane polygon borders.
+                                idx = BEV_IDX_ALL_LINES
+                                if line_type == 'left':
+                                    left_type = lane_info.get("left_line_type")
+                                    if left_type in ("broken", "dashed", "line_broken"):
+                                        idx = BEV_IDX_BROKEN_LINES
+                                else:
+                                    right_type = lane_info.get("right_line_type")
+                                    if right_type in ("broken", "dashed", "line_broken"):
+                                        idx = BEV_IDX_BROKEN_LINES
                                 
                                 # Рисуем линию
                                 for t in np.linspace(0, 1, num_steps + 1):
@@ -359,6 +371,46 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
                                     px, py = ego_to_pix(ex, ey)
                                     if 0 <= px < resolution and 0 <= py < resolution:
                                         sem_map[py, px] = idx
+
+                # Draw explicit dividers from map_data with accurate broken/solid type.
+                for feat_id, feat in map_data.items():
+                    feat_type = feat.get("type", "")
+                    if feat_type == MetaDriveType.LINE_BROKEN_SINGLE_WHITE:
+                        idx = BEV_IDX_BROKEN_LINES
+                    elif feat_type in (
+                        MetaDriveType.LINE_SOLID_SINGLE_WHITE,
+                        MetaDriveType.LINE_SOLID_DOUBLE_WHITE,
+                        MetaDriveType.LINE_SOLID_SINGLE_YELLOW,
+                        MetaDriveType.LINE_SOLID_DOUBLE_YELLOW,
+                    ):
+                        idx = BEV_IDX_ALL_LINES
+                    else:
+                        continue
+
+                    polyline = feat.get("polyline")
+                    if polyline is None:
+                        continue
+                    polyline = np.asarray(polyline, dtype=np.float64)
+                    if polyline.ndim != 2 or len(polyline) < 2:
+                        continue
+                    if polyline.shape[1] > 2:
+                        polyline = polyline[:, :2]
+
+                    for i in range(len(polyline) - 1):
+                        pt1 = polyline[i]
+                        pt2 = polyline[i + 1]
+                        ex1, ey1 = world_to_ego_xy(pt1[0], pt1[1])
+                        ex2, ey2 = world_to_ego_xy(pt2[0], pt2[1])
+                        num_steps = max(2, int(np.hypot(ex2 - ex1, ey2 - ey1) * scale))
+                        for step in range(num_steps + 1):
+                            t = step / num_steps
+                            ex = ex1 + t * (ex2 - ex1)
+                            ey = ey1 + t * (ey2 - ey1)
+                            if abs(ex) > size_meters / 2 or abs(ey) > size_meters / 2:
+                                continue
+                            px, py = ego_to_pix(ex, ey)
+                            if 0 <= px < resolution and 0 <= py < resolution:
+                                sem_map[py, px] = idx
                                         
         except Exception as e:
             print(f"Warning: Error rendering BEV for EdgeRoadNetwork: {e}")
@@ -383,6 +435,7 @@ def metadrive_obs_to_plant2_batch(
     bev_resolution=128,
     bev_size_meters=64.0,
     device="cpu",
+    include_stop_signs=True,
 ):
     """
     Преобразовать состояние MetaDrive в batch для PlanT/HFLM.
@@ -408,6 +461,7 @@ def metadrive_obs_to_plant2_batch(
         max_objects=max_objects,
         max_distance=max_distance,
         range_factor_front=range_factor_front,
+        include_stop_signs=include_stop_signs,
     )
     x_list, num_objs = objects_to_x_batch(objects, max_objects)
 
@@ -459,4 +513,3 @@ def metadrive_obs_to_plant2_batch(
 
 
     return batch
-
