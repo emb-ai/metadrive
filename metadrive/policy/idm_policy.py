@@ -291,7 +291,6 @@ class IDMPolicy(BasePolicy):
         if self.routing_target_lane not in current_lanes:
             for lane in current_lanes:
                 if isinstance(routing_network, EdgeRoadNetwork):
-                    print("self.control_object.navigation.checkpoints:  ", self.control_object.navigation.checkpoints)
                     if self.routing_target_lane.is_previous_lane_of(lane) or \
                             (self.routing_target_lane.index in self.control_object.navigation.checkpoints and \
                             lane.index in self.control_object.navigation.checkpoints):

@@ -423,20 +423,78 @@ def extract_map_features(graph):
 
     ret = {}
 
+    def _extract_junction_priority(junction_node):
+        """Extract SUMO request/priority relations for a junction."""
+        try:
+            conn_by_index = {}
+            for conn in junction_node.sumolib_obj.getConnections():
+                idx = conn.getJunctionIndex()
+                if idx is None or idx < 0:
+                    continue
+                if idx not in conn_by_index:
+                    conn_by_index[idx] = conn
+            conn_indices = sorted(conn_by_index.keys())
+        except Exception:
+            return {}
+
+        priority = {}
+        for idx in conn_indices:
+            foes = []
+            must_yield_to = []
+            has_priority_over = []
+            for other in conn_indices:
+                if other == idx:
+                    continue
+                try:
+                    if junction_node.sumolib_obj.areFoes(idx, other):
+                        foes.append(other)
+                    # sumolib Node.forbids expects Connection objects, not indices.
+                    if junction_node.sumolib_obj.forbids(conn_by_index[other], conn_by_index[idx]):
+                        must_yield_to.append(other)
+                    if junction_node.sumolib_obj.forbids(conn_by_index[idx], conn_by_index[other]):
+                        has_priority_over.append(other)
+                except Exception:
+                    continue
+
+            priority[idx] = {
+                "foes": foes,
+                "must_yield_to": must_yield_to,
+                "has_priority_over": has_priority_over,
+                "has_priority": len(must_yield_to) == 0,
+            }
+
+        return priority
+
+    junction_priority_cache = {}
+    junction_incoming_lane_cache = {}
+
     # Build junction polygons (intersection areas) and their outer boundary lines
-    # for junction_id, junction in graph.junctions.items():
-    #     if len(junction.shape) <= 2:
-    #         continue
-    #     boundary_polygon = Polygon(junction.shape)
-    #     if not boundary_polygon.is_valid or boundary_polygon.is_empty:
-    #         continue
-    #     boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
-    #     id = "junction_{}".format(junction.name)
-    #     ret[id] = {
-    #         SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
-    #         SD.POLYLINE: junction.shape,
-    #         SD.POLYGON: boundary_coords,
-    #     }
+    for junction_id, junction in graph.junctions.items():
+        if len(junction.shape) <= 2:
+            continue
+        boundary_polygon = Polygon(junction.shape)
+        if not boundary_polygon.is_valid or boundary_polygon.is_empty:
+            continue
+        boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
+        id = "junction_{}".format(junction.name)
+        ret[id] = {
+            SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
+            SD.POLYLINE: junction.shape,
+            SD.POLYGON: boundary_coords,
+            "priority": _extract_junction_priority(junction),
+        }
+        junction_priority_cache[junction.name] = ret[id]["priority"]
+        incoming_driving_lanes = []
+        for road in getattr(junction, "incoming", []):
+            for lane in getattr(road, "lanes", []):
+                if getattr(lane, "type", None) != "driving":
+                    continue
+                lane_name = getattr(lane, "name", None)
+                if lane_name is None or ":" in lane_name:
+                    continue
+                incoming_driving_lanes.append(lane_name)
+        if incoming_driving_lanes:
+            junction_incoming_lane_cache[junction.name] = sorted(set(incoming_driving_lanes))
 
     #     # Collect lane endpoints at the junction side to identify road openings
     #     lane_endpoints = []
@@ -501,7 +559,9 @@ def extract_map_features(graph):
                     "exit_lanes": [],
                     "left_lanes": [],
                     "right_lanes": [],
-                    "tl_signals": []
+                    "tl_signals": [],
+                    "incoming_junction_id": None,
+                    "incoming_junction_lanes": [],
                 }
             # elif lane.type == 'sidewalk':
             #     ret[id] = {
@@ -589,6 +649,30 @@ def extract_map_features(graph):
                 }
                 if via_id:
                     turn_entry["via_lane"] = f"lane_{via_id}"
+
+                junction_node = getattr(lane_node.road, "to_junction", None)
+                if junction_node is not None:
+                    try:
+                        turn_entry["junction_type"] = junction_node.sumolib_obj.getType()
+                    except Exception:
+                        pass
+                    ret[base_lane_id]["incoming_junction_id"] = f"junction_{junction_node.name}"
+                    incoming_lane_ids = [
+                        f"lane_{ln}"
+                        for ln in junction_incoming_lane_cache.get(junction_node.name, [])
+                        if f"lane_{ln}" in ret
+                    ]
+                    if incoming_lane_ids:
+                        ret[base_lane_id]["incoming_junction_lanes"] = incoming_lane_ids
+                    junction_priority = junction_priority_cache.get(junction_node.name)
+                    if junction_priority is None:
+                        junction_priority = _extract_junction_priority(junction_node)
+                        junction_priority_cache[junction_node.name] = junction_priority
+                    j_idx = conn.getJunctionIndex()
+                    if j_idx is not None and j_idx in junction_priority:
+                        turn_entry["junction_index"] = j_idx
+                        turn_entry["priority"] = junction_priority[j_idx]
+
                 turns.append(turn_entry)
 
         if turns:

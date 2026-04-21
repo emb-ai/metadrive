@@ -342,48 +342,19 @@ class BaseVehicle(BaseObject, BaseVehicleState):
                 position = [0, 0]
                 heading = 0
             else:
+                start_entry_lanes = []
+                lane = None
                 if map.road_network_type == EdgeRoadNetwork:
                     lane_key = map.road_network.find_rightmost_lane_by_road_id(self.config["spawn_lane_index"])
+                    lane = map.road_network.get_lane(lane_key)
+                    start_entry_lanes = [
+                        lane_id
+                        for lane_id in lane.entry_lanes
+                        if ":" not in lane_id
+                    ]
                 else:
                     lane_key = self.config["spawn_lane_index"]
-                lane = map.road_network.get_lane(lane_key)
-                # PGMap lanes (StraightLane/CircularLane) don't have entry_lanes;
-                # only EdgeRoadNetwork lanes (SUMO) do. Walk upstream through
-                # internal junction lanes (id starts with ':') until we find a
-                # real-edge predecessor — gives the ego runway before the
-                # original spawn lane (e.g. approaching a stop sign).
-                start_entry_lanes = [
-                    lane_id
-                    for lane_id in getattr(lane, "entry_lanes", [])
-                    if ":" not in lane_id
-                ]
-                if not start_entry_lanes and getattr(lane, "entry_lanes", None):
-                    visited = set()
-                    queue = list(lane.entry_lanes)
-                    max_hops = 6
-                    hops = 0
-                    while queue and hops < max_hops:
-                        hops += 1
-                        next_queue = []
-                        for eid in queue:
-                            if eid in visited:
-                                continue
-                            visited.add(eid)
-                            if ":" not in eid:
-                                start_entry_lanes = [eid]
-                                queue = []
-                                break
-                            try:
-                                parent = map.road_network.get_lane(eid)
-                            except Exception:
-                                parent = None
-                            if parent is not None:
-                                for pid in getattr(parent, "entry_lanes", None) or []:
-                                    if pid not in visited:
-                                        next_queue.append(pid)
-                        if start_entry_lanes:
-                            break
-                        queue = next_queue
+                    lane = map.road_network.get_lane(lane_key)
                 if len(start_entry_lanes) > 0:
                     lane = map.road_network.get_lane(start_entry_lanes[0])
                 position = lane.position(self.config["spawn_longitude"], self.config["spawn_lateral"])
