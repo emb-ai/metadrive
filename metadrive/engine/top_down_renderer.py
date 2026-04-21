@@ -1121,7 +1121,7 @@ class TopDownRenderer:
 
         # Create surfaces from raw icons if not already created
         # Only create surfaces for icons that are not yet created
-        icon_px = max(int(24 * self.scaling / 5.0), 12)
+        icon_px = max(int(18 * self.scaling / 5.0), 8)
         for name, img in self.sign_icon_raw.items():
             if name not in self.sign_icon_surfaces or getattr(self, '_last_icon_px', 0) != icon_px:
                 try:
@@ -1217,17 +1217,26 @@ class TopDownRenderer:
                     try:
                         icon_size = icon.get_size()
                         if icon_size[0] > 0 and icon_size[1] > 0:
-                            pixel_x, pixel_y = self._frame_canvas.pos2pix(sign.position[0], sign.position[1])
-                            # Compute rotation from sign heading:
-                            # heading_theta = lane_heading + pi/2 (perpendicular to lane)
-                            # For pygame: rotate so icon faces the driver
-                            rotation_deg = getattr(sign, 'top_down_icon_rotation_deg', None)
-                            if rotation_deg is None:
-                                sign_heading = getattr(sign, 'heading_theta', 0.0)
-                                rotation_deg = float(np.rad2deg(sign_heading) - 180.0)
-                            draw_icon = pygame.transform.rotate(icon, rotation_deg)
-                            rect = draw_icon.get_rect(center=(pixel_x, pixel_y))
-                            self._frame_canvas.blit(draw_icon, rect)
+                            poses = None
+                            if hasattr(sign, 'get_top_down_icon_poses'):
+                                try:
+                                    poses = sign.get_top_down_icon_poses()
+                                except Exception:
+                                    poses = None
+                            if not poses:
+                                poses = [(sign.position, getattr(sign, 'heading_theta', 0.0))]
+
+                            for pos, sign_heading in poses:
+                                pixel_x, pixel_y = self._frame_canvas.pos2pix(pos[0], pos[1])
+                                # Compute rotation from sign heading:
+                                # heading_theta = lane_heading + pi/2 (perpendicular to lane)
+                                # For pygame: rotate so icon faces the driver
+                                rotation_deg = getattr(sign, 'top_down_icon_rotation_deg', None)
+                                if rotation_deg is None:
+                                    rotation_deg = float(np.rad2deg(sign_heading) - 180.0)
+                                draw_icon = pygame.transform.rotate(icon, rotation_deg)
+                                rect = draw_icon.get_rect(center=(pixel_x, pixel_y))
+                                self._frame_canvas.blit(draw_icon, rect)
                     except Exception:
                         pass
 
