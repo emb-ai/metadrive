@@ -431,7 +431,8 @@ def draw_top_down_map_native(
     return_surface=False,
     film_size=(2000, 2000),
     scaling=None,
-    semantic_broken_line=True
+    semantic_broken_line=True,
+    draw_priority_signs=False,
 ) -> Optional[Union[np.ndarray, pygame.Surface]]:
     """
     Draw the top_down map on a pygame surface
@@ -627,7 +628,7 @@ def draw_top_down_map_native(
                         pygame.draw.line(surface, CROSSWALK_STOP_LINE_COLOR, p1, p2, width)
                         pygame.draw.line(surface, CROSSWALK_STOP_LINE_COLOR, p3, p4, width)
 
-    if semantic_map:
+    if draw_priority_signs and semantic_map:
         _draw_lane_priority_signs(surface, all_lanes)
 
     return surface if return_surface else WorldSurface.to_cv2_image(surface)
@@ -765,11 +766,14 @@ class TopDownRenderer:
 
         self.sign_icon_raw = {}
         self.sign_icon_surfaces = {}
+        self._draw_priority_signs = False
         if hasattr(self.engine, 'traffic_sign_manager'):
             sign_mgr = self.engine.traffic_sign_manager
             for sign in sign_mgr.signs:
                 sign_type = type(sign).__name__
                 icon_path = sign.icon_path
+                if getattr(sign, 'is_priority_sign', False):
+                    self._draw_priority_signs = True
                 if icon_path is not None:
                     try:
                         self.sign_icon_raw[sign_type] = pygame.image.load(icon_path)
@@ -827,7 +831,8 @@ class TopDownRenderer:
             semantic_map=self.semantic_map,
             return_surface=True,
             film_size=self.film_size,
-            semantic_broken_line=self.semantic_broken_line
+            semantic_broken_line=self.semantic_broken_line,
+            draw_priority_signs=self._draw_priority_signs,
         )
         self.scaling = self._background_canvas.scaling
 
