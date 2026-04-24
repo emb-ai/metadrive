@@ -48,7 +48,7 @@ class LaneShape:
         """
         Lane shape
         """
-        shape = buffered_shape(shape.getShape(), shape.getWidth())
+        shape = buffered_shape(shape.getShape(), width)
         self.shape = shape
 
 
