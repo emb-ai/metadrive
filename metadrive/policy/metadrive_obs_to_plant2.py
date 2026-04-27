@@ -168,10 +168,10 @@ def objects_to_x_batch(objects_list, max_objects=30):
 
 
 def get_speed_limit_idx(speed_limit_kmh=None):
-    """PlanTVariables.speed_cats. При отсутствии лимита — 3 (120 км/ч)."""
+    """PlanTVariables.speed_cats. При отсутствии лимита — 1 (80 км/ч)."""
     if speed_limit_kmh is None:
-        return 3
-    return SPEED_CATS.get(speed_limit_kmh, 3)
+        return 1
+    return SPEED_CATS.get(speed_limit_kmh, 1)
 
 
 # PlanTVariables.bev_colors — палитра для semantic BEV (imagenet-friendly)
