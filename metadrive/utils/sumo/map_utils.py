@@ -469,32 +469,32 @@ def extract_map_features(graph):
     junction_incoming_lane_cache = {}
 
     # Build junction polygons (intersection areas) and their outer boundary lines
-    for junction_id, junction in graph.junctions.items():
-        if len(junction.shape) <= 2:
-            continue
-        boundary_polygon = Polygon(junction.shape)
-        if not boundary_polygon.is_valid or boundary_polygon.is_empty:
-            continue
-        boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
-        id = "junction_{}".format(junction.name)
-        ret[id] = {
-            SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
-            SD.POLYLINE: junction.shape,
-            SD.POLYGON: boundary_coords,
-            "priority": _extract_junction_priority(junction),
-        }
-        junction_priority_cache[junction.name] = ret[id]["priority"]
-        incoming_driving_lanes = []
-        for road in getattr(junction, "incoming", []):
-            for lane in getattr(road, "lanes", []):
-                if getattr(lane, "type", None) != "driving":
-                    continue
-                lane_name = getattr(lane, "name", None)
-                if lane_name is None or ":" in lane_name:
-                    continue
-                incoming_driving_lanes.append(lane_name)
-        if incoming_driving_lanes:
-            junction_incoming_lane_cache[junction.name] = sorted(set(incoming_driving_lanes))
+    # for junction_id, junction in graph.junctions.items():
+    #     if len(junction.shape) <= 2:
+    #         continue
+    #     boundary_polygon = Polygon(junction.shape)
+    #     if not boundary_polygon.is_valid or boundary_polygon.is_empty:
+    #         continue
+    #     boundary_coords = [(x, y) for x, y in boundary_polygon.exterior.coords]
+    #     id = "junction_{}".format(junction.name)
+    #     ret[id] = {
+    #         SD.TYPE: MetaDriveType.LANE_SURFACE_STREET,
+    #         SD.POLYLINE: junction.shape,
+    #         SD.POLYGON: boundary_coords,
+    #         "priority": _extract_junction_priority(junction),
+    #     }
+    #     junction_priority_cache[junction.name] = ret[id]["priority"]
+    #     incoming_driving_lanes = []
+    #     for road in getattr(junction, "incoming", []):
+    #         for lane in getattr(road, "lanes", []):
+    #             if getattr(lane, "type", None) != "driving":
+    #                 continue
+    #             lane_name = getattr(lane, "name", None)
+    #             if lane_name is None or ":" in lane_name:
+    #                 continue
+    #             incoming_driving_lanes.append(lane_name)
+    #     if incoming_driving_lanes:
+    #         junction_incoming_lane_cache[junction.name] = sorted(set(incoming_driving_lanes))
 
     #     # Collect lane endpoints at the junction side to identify road openings
     #     lane_endpoints = []
