@@ -99,7 +99,6 @@ class EdgeRoadNetwork(BaseRoadNetwork):
             return True
         
         lane_data = self.graph[lane_index_1]
-        print("lane_data.exit_lane: ", lane_data.exit_lanes)
         if lane_index_2 in lane_data.exit_lanes:
             return True
 
