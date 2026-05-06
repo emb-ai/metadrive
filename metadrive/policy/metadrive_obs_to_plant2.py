@@ -1,7 +1,7 @@
 """
-Преобразование obs/состояния MetaDrive в формат входа PlanT 2.0 (совместим с HFLM).
+Convert MetaDrive obs/state into PlanT 2.0 input format (HFLM-compatible).
 
-Соответствует PlanT/dataset.py::generate_batch и PlanTVariables.
+Mirrors PlanT/dataset.py::generate_batch and PlanTVariables.
 """
 import os
 import sys
@@ -29,7 +29,7 @@ SPEED_CATS = {50: 0, 80: 1, 100: 2, 120: 3}
 
 
 def _get_obj_type(obj):
-    """Определить тип объекта PlanT по экземпляру MetaDrive."""
+    """Determine the PlanT object type from a MetaDrive instance."""
     from metadrive.component.vehicle.base_vehicle import BaseVehicle
     from metadrive.component.traffic_participants.base_traffic_participant import BaseTrafficParticipant
     from metadrive.component.traffic_participants.pedestrian import Pedestrian
@@ -53,7 +53,7 @@ def _get_obj_type(obj):
 
 
 def _get_obj_extent(obj):
-    """Получить extent (half-extents) объекта в метрах: (ext_x, ext_y)."""
+    """Get the object's extent (half-extents) in metres: (ext_x, ext_y)."""
     w = getattr(obj, "top_down_width", 2.0) or 2.0
     l = getattr(obj, "top_down_length", 4.0) or 4.0
     ext_x = float(l) / 2.0
@@ -62,7 +62,7 @@ def _get_obj_extent(obj):
 
 
 def _get_obj_speed_kmh(obj):
-    """Скорость объекта в км/ч."""
+    """Object speed in km/h."""
     if hasattr(obj, "velocity"):
         v = obj.velocity
         if hasattr(v, "__len__"):
@@ -75,8 +75,8 @@ def _get_obj_speed_kmh(obj):
 
 def _passes_distance_filter(x, y, obj_type, max_distance=50.0, range_factor_front=2.0, tl_stop_radius=30.0):
     """
-    PlanT2: эллиптический фильтр для обычных объектов, круг 30м для TL/stop.
-    x,y в ego frame (x вперёд).
+    PlanT2: elliptical filter for regular objects, 30 m circle for TL/stop.
+    x, y are in ego frame (x forward).
     """
     if obj_type in (OBJ_TYPE_TRAFFIC_LIGHT, OBJ_TYPE_STOP_SIGN):
         return x * x + y * y <= tl_stop_radius * tl_stop_radius
@@ -94,8 +94,8 @@ def collect_objects_ego_frame(
     include_stop_signs=True,
 ):
     """
-    Собрать объекты в ego frame. PlanT2: TL только Red/Yellow (affects_ego), stop только affects_ego.
-    Эллиптический фильтр: впереди видно дальше (range_factor_front).
+    Collect objects in ego frame. PlanT2: include TL only when Red/Yellow (affects_ego); stop only when affects_ego.
+    Elliptical filter: longer reach forward (range_factor_front).
     """
     from metadrive.utils.math import wrap_to_pi
     from metadrive.constants import MetaDriveType
@@ -115,7 +115,7 @@ def collect_objects_ego_frame(
         x, y = float(local[0]), -float(local[1])  # negate y: MetaDrive (fwd, LEFT) → CARLA (fwd, RIGHT)
         t = obj_type if obj_type is not None else _get_obj_type(obj)
 
-        # TL: только Red/Yellow (в MetaDrive нет affects_ego — включаем если Red/Yellow)
+        # TL: only Red/Yellow (MetaDrive has no affects_ego — include if Red/Yellow)
         if t == OBJ_TYPE_TRAFFIC_LIGHT:
             status = getattr(obj, "status", MetaDriveType.LIGHT_UNKNOWN)
             if status not in (MetaDriveType.LIGHT_RED, MetaDriveType.LIGHT_YELLOW):
@@ -152,8 +152,8 @@ def collect_objects_ego_frame(
 
 def objects_to_x_batch(objects_list, max_objects=30):
     """
-    PlanT2 generate_batch: x_objs — пул (1+num_objs, 7), idxs — (B, maxseq) с нулями как padding.
-    Формат строки: [type, x, y, yaw_deg, speed_kmh, extent_y*2, extent_x*2] (doorflag=0).
+    PlanT2 generate_batch: x_objs is a pool of shape (1+num_objs, 7); idxs is (B, maxseq) with zeros as padding.
+    Row format: [type, x, y, yaw_deg, speed_kmh, extent_y*2, extent_x*2] (doorflag=0).
     """
     import torch
 
@@ -168,13 +168,13 @@ def objects_to_x_batch(objects_list, max_objects=30):
 
 
 def get_speed_limit_idx(speed_limit_kmh=None):
-    """PlanTVariables.speed_cats. При отсутствии лимита — 1 (80 км/ч)."""
+    """PlanTVariables.speed_cats. Defaults to 1 (80 km/h) when no limit is set."""
     if speed_limit_kmh is None:
         return 1
     return SPEED_CATS.get(speed_limit_kmh, 1)
 
 
-# PlanTVariables.bev_colors — палитра для semantic BEV (imagenet-friendly)
+# PlanTVariables.bev_colors — palette for the semantic BEV (imagenet-friendly)
 BEV_COLORS = np.array([
     [0.485, 0.456, 0.406],  # 0 Background (Imagenet mean)
     [0.25, 0.25, 0.75],    # 1 Street
@@ -186,8 +186,8 @@ BEV_COLORS = np.array([
 
 def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, device="cpu"):
     """
-    PlanT2 BEV: semantic index map (0-4) -> RGB через PlanTVariables.bev_colors.
-    Поддерживает как NodeRoadNetwork, так и EdgeRoadNetwork.
+    PlanT2 BEV: semantic index map (0-4) -> RGB via PlanTVariables.bev_colors.
+    Supports both NodeRoadNetwork and EdgeRoadNetwork.
     Returns: torch.Tensor (1, 3, 128, 128) float32.
     """
     import torch
@@ -218,9 +218,9 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
 
     sem_map = np.zeros((resolution, resolution), dtype=np.uint8)
     
-    # Обработка для разных типов road network
+    # Handle different road network types
     if isinstance(road_network, NodeRoadNetwork):
-        # Оригинальная логика для NodeRoadNetwork (PG-based)
+        # Original logic for NodeRoadNetwork (PG-based)
         for _from in road_network.graph.keys():
             for _to in road_network.graph[_from].keys():
                 for lane in road_network.graph[_from][_to]:
@@ -257,9 +257,9 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
                         pass
     
     elif isinstance(road_network, EdgeRoadNetwork):
-        # Логика для EdgeRoadNetwork (SUMO-based)
+        # Logic for EdgeRoadNetwork (SUMO-based)
         try:
-            # Получаем map_data из текущей карты
+            # Get map_data from the current map
             map_data = None
             if hasattr(engine, 'map_manager') and hasattr(engine.map_manager, 'current_map'):
                 current_map = engine.map_manager.current_map
@@ -271,18 +271,18 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
                 map_data = engine.current_map.map_data
             
             if map_data is None:
-                # Если map_data нет, пробуем получить через road_network
+                # If map_data is missing, fall back to road_network
                 if hasattr(road_network, 'graph'):
                     map_data = road_network.graph
             
             if map_data:
                 for lane_id, lane_info in map_data.items():
-                    # Проверяем, что это lane
+                    # Check that this entry is a lane
                     lane_type = lane_info.get("type", "")
                     if not MetaDriveType.is_lane(lane_type):
                         continue
                     
-                    # Получаем полилинию
+                    # Get the polyline
                     polyline = None
                     if "polyline" in lane_info:
                         polyline = np.array(lane_info["polyline"])
@@ -294,30 +294,30 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
                     if polyline is None or len(polyline) < 2:
                         continue
                     
-                    # Убеждаемся, что полилиния 2D
+                    # Make sure the polyline is 2D
                     if polyline.shape[1] > 2:
                         polyline = polyline[:, :2]
                     
-                    # Получаем ширину lane
+                    # Get the lane width
                     width = lane_info.get("width", 3.5)
                     if isinstance(width, (list, tuple)):
-                        width = width[0]  # Используем первую ширину
+                        width = width[0]  # Use the first width
                     
-                    # Проходим по точкам полилинии
+                    # Iterate over polyline points
                     for i in range(len(polyline) - 1):
                         pt1 = polyline[i]
                         pt2 = polyline[i + 1]
                         
-                        # Переводим точки в ego frame
+                        # Convert points to ego frame
                         ex1, ey1 = world_to_ego_xy(pt1[0], pt1[1])
                         ex2, ey2 = world_to_ego_xy(pt2[0], pt2[1])
                         
-                        # Проверяем, что точки в пределах видимости
+                        # Check that points are within the visible range
                         if abs(ex1) > size_meters / 2 and abs(ex2) > size_meters / 2:
                             continue
                         
-                        # Рисуем lane (заполненный)
-                        # Интерполируем между точками
+                        # Draw the lane (filled)
+                        # Interpolate between points
                         num_steps = max(2, int(np.hypot(ex2 - ex1, ey2 - ey1) * scale))
                         for step in range(num_steps + 1):
                             t = step / num_steps
@@ -335,8 +335,8 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
                                     if 0 <= nx < resolution and 0 <= ny < resolution:
                                         sem_map[ny, nx] = BEV_IDX_STREET
                         
-                        # Рисуем линии (границы)
-                        # Левая и правая границы
+                        # Draw lines (borders)
+                        # Left and right borders
                         direction = np.array([pt2[0] - pt1[0], pt2[1] - pt1[1]])
                         direction_norm = np.linalg.norm(direction)
                         if direction_norm > 1e-6:
@@ -359,7 +359,7 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
                                     if right_type in ("broken", "dashed", "line_broken"):
                                         idx = BEV_IDX_BROKEN_LINES
                                 
-                                # Рисуем линию
+                                # Draw the line
                                 for t in np.linspace(0, 1, num_steps + 1):
                                     pt = polyline[i] + t * (polyline[i + 1] - polyline[i])
                                     line_pt = pt + offset
@@ -416,7 +416,7 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
             print(f"Warning: Error rendering BEV for EdgeRoadNetwork: {e}")
             pass
     
-    # Преобразуем в RGB
+    # Convert to RGB
     rgb = BEV_COLORS[sem_map]
     bev_t = torch.from_numpy(rgb).permute(2, 0, 1).unsqueeze(0).float().to(device)
     return bev_t
@@ -438,8 +438,8 @@ def metadrive_obs_to_plant2_batch(
     include_stop_signs=True,
 ):
     """
-    Преобразовать состояние MetaDrive в batch для PlanT/HFLM.
-    Соответствует PlanT generate_batch: idxs (B, maxseq) с нулями как padding, x_objs — пул.
+    Convert MetaDrive state into a batch for PlanT/HFLM.
+    Mirrors PlanT generate_batch: idxs (B, maxseq) with zeros as padding, x_objs is a pool.
     """
     import torch
     from metadrive.policy.plant_policy import get_route_points_ego_frame
