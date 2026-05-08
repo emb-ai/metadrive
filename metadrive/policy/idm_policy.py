@@ -466,7 +466,6 @@ class ModifiedIDMPolicy(IDMPolicy):
             if not isinstance(sign, StopSign):
                 continue
 
-            # Проверяем, находится ли знак на текущей или следующей полосе маршрута
             if sign.lane in self.control_object.navigation.current_ref_lanes:
                 return sign
         return None
