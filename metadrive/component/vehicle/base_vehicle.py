@@ -349,7 +349,7 @@ class BaseVehicle(BaseObject, BaseVehicleState):
                     lane = map.road_network.get_lane(lane_key)
                     start_entry_lanes = [
                         lane_id
-                        for lane_id in lane.entry_lanes
+                        for lane_id in (lane.entry_lanes or [])
                         if ":" not in lane_id
                     ]
                 else:
