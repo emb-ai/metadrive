@@ -9,6 +9,8 @@ from metadrive.utils.math import get_boxes_bounding_box
 from metadrive.utils.pg.utils import get_lanes_bounding_box
 from metadrive.utils import get_np_random
 
+from collections import deque 
+
 lane_info = namedtuple("edge_lane", ["lane", "entry_lanes", "exit_lanes", "left_lanes", "right_lanes", "turns", "speed", "width", "tl_signals"])
 
 
@@ -89,7 +91,8 @@ class EdgeRoadNetwork(BaseRoadNetwork):
         return res_x_min, res_x_max, res_y_min, res_y_max
 
     def shortest_path(self, start: str, goal: str):
-        return next(self.bfs_paths(start, goal), [])
+        a = self.find_path(start, goal, max_len=10)
+        return a
 
     def has_connection(self, lane_index_1, lane_index_2):
         if lane_index_1 not in self.graph or lane_index_2 not in self.graph:
@@ -111,64 +114,90 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 return True
         return False
 
-    def bfs_paths(self, start: str, goal: str) -> List[List[str]]:
-            """
-            Breadth-first search of all routes from start to goal.
-            :param start: starting edges
-            :param goal: goal edge
-            :return: list of paths from start to goal.
-            """
-            if start not in self.graph:
-                yield []
-                return
-            start_entry_lanes = [
-                lane_id
-                for lane_id in self.graph[start].entry_lanes
-                if lane_id in self.graph and ":" not in lane_id
-            ]
-            if len(start_entry_lanes) > 0:
-                forced_entry_lane = start_entry_lanes[0]
-                queue = [(start, [forced_entry_lane, start])]
-            else:
-                lanes = [start]
-                lanes.extend(self.graph[start].right_lanes)
-                queue = [(lane, [lane]) for lane in lanes if lane in self.graph]
-            while queue:
-                (lane, path) = queue.pop(0)
-                if lane not in self.graph:
-                    yield []
-                lane_data = self.graph[lane]
-                blocked_uturn_targets = set()
-                for turn in getattr(lane_data, 'turns', []) or []:
-                    if turn.get("direction") == "t":
-                        to_lane = turn.get("to_lane")
-                        via_lane = turn.get("via_lane")
-                        if to_lane is not None:
-                            blocked_uturn_targets.add(to_lane)
-                        if via_lane is not None:
-                            blocked_uturn_targets.add(via_lane)
-                if len(self.graph[lane].exit_lanes) == 0:
-                    continue
-                for _next in sorted(set(self.graph[lane].exit_lanes)):
-                    is_uturn_target = _next in blocked_uturn_targets
-                    if is_uturn_target:
-                        target_lane_data = self.graph.get(_next)
-                        allow_uturn = target_lane_data is not None and len(target_lane_data.right_lanes) > 0
-                        if not allow_uturn:
-                            continue
-                    if len(path) >= 2 and _next == path[-2] and not is_uturn_target:
-                        continue
-                    if _next in path:
-                        # circle
-                        continue
-                    if goal is None and len(path) > 10:
-                        yield path + [_next]
-                    if _next == goal:
-                        yield path + [_next]
-                    elif _next in self.graph:
-                        queue.append((_next, path + [_next]))
-            yield path
+    def find_path(self, start: str, goal: str, max_len: int = 10) -> List[str]:
+        """
+        BFS route search with bounded path length.
 
+        If goal is None, returns first valid route with length >= max_len,
+        otherwise returns shortest path to goal (bounded by max_len).
+        """
+        if start not in self.graph:
+            return []
+
+        start_entry_lanes = [
+            lane_id
+            for lane_id in self.graph[start].entry_lanes
+            if lane_id in self.graph and ":" not in lane_id
+        ]
+        fallback_path = [start]
+
+        if len(start_entry_lanes) > 0:
+            forced_entry_lane = start_entry_lanes[0]
+            queue = deque([(start, [forced_entry_lane, start])])
+            fallback_path = [forced_entry_lane, start]
+        else:
+            lanes = [start]
+            lanes.extend(self.graph[start].right_lanes)
+            seed_paths = [(lane, [lane]) for lane in lanes if lane in self.graph]
+            queue = deque(seed_paths)
+            if seed_paths:
+                fallback_path = seed_paths[0][1]
+
+        while queue:
+            lane, path = queue.popleft()
+            if lane not in self.graph:
+                continue
+
+            lane_data = self.graph[lane]
+            blocked_uturn_targets = set()
+            for turn in getattr(lane_data, "turns", []) or []:
+                if turn.get("direction") == "t":
+                    to_lane = turn.get("to_lane")
+                    via_lane = turn.get("via_lane")
+                    if to_lane is not None:
+                        blocked_uturn_targets.add(to_lane)
+                    if via_lane is not None:
+                        blocked_uturn_targets.add(via_lane)
+
+            if len(lane_data.exit_lanes) == 0:
+                continue
+
+            for _next in sorted(set(lane_data.exit_lanes)):
+                is_uturn_target = _next in blocked_uturn_targets
+                if is_uturn_target:
+                    target_lane_data = self.graph.get(_next)
+                    allow_uturn = target_lane_data is not None and len(target_lane_data.right_lanes) > 0
+                    if not allow_uturn:
+                        continue
+
+                if len(path) >= 2 and _next == path[-2] and not is_uturn_target:
+                    continue
+                if _next in path:
+                    continue
+                if _next not in self.graph:
+                    continue
+
+                new_path = path + [_next]
+
+                if goal is None:
+                    if len(new_path) >= max_len:
+                        return new_path
+                else:
+                    if _next == goal:
+                        return new_path
+
+                if len(new_path) < max_len:
+                    queue.append((_next, new_path))
+                    if len(new_path) > len(fallback_path):
+                        fallback_path = new_path
+
+        return fallback_path if goal is None else []
+
+    def bfs_paths(self, start: str, goal: str) -> List[List[str]]:
+        """Backward-compatible wrapper: yields at most one path."""
+        path = self.find_path(start, goal, max_len=10)
+        if path:
+            yield path
 
     def get_peer_lanes_from_index(self, lane_index):
         info: lane_info = self.graph[lane_index]

@@ -98,7 +98,6 @@ class TopDownMultiChannel(TopDownObservation):
             lane_index = checkpoints[i]
             try:
                 lane = self.road_network.get_lane(lane_index)
-                # Отрисовка всей полосы как "навигационной зоны"
                 if lane.left_lanes:
                     for left_index in lane.left_lanes:
                         left_lane = self.road_network.get_lane(left_index)

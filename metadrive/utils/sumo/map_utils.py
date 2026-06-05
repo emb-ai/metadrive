@@ -101,7 +101,7 @@ class LaneNode:
             else:
                 self.type = lane_type
         elif self.edge_type in ('service', 'highway.service'):
-            # Считаем service дороги пригодными для автомобилей (для привязки знаков)
+            # Treat service roads as drivable (so signs can be attached to them)
             self.type = 'driving'
         elif edge_function == 'internal' and sumolib_obj.allows('delivery'):
             # internal lane from service-like connections: keep routable
@@ -212,10 +212,10 @@ class RoadLaneJunctionGraph:
         for tl in self.tls:
             tl_info = {
                 'id': tl.getID(),
-                'controlled_lanes': [],        # заполним позже
+                'controlled_lanes': [],        # filled in below
                 'programs': tl.getPrograms()
             }
-            # Собираем управляемые полосы
+            # Collect controlled lanes
             for link in tl.getConnections():
                 from_lane = link[0].getID()
                 to_lane = link[1].getID()
@@ -228,7 +228,7 @@ class RoadLaneJunctionGraph:
             self.traffic_lights.append(tl_info)
 
 
-            # Создаем маппинг from_lane -> сигналы светофора
+            # Build mapping from_lane -> traffic light signals
             for conn in tl_info['controlled_lanes']:
                 from_lane = conn['from']
                 to_lane = conn['to']
@@ -539,7 +539,7 @@ def extract_map_features(graph):
     #             SD.POLYLINE: current_segment,
     #         }
 
-    # Сначала создадим все полосы без связей
+    # First create all lanes without connections
     lane_names = set()
     for road_id, road in graph.roads.items():
         for lane in road.lanes:
@@ -553,7 +553,7 @@ def extract_map_features(graph):
                     SD.POLYGON: boundary_polygon,
                     SD.WIDTH: lane.width,
                     "speed": lane.speed,
-                    # Заглушки — заполним ниже
+                    # Placeholders — filled in below
                     "entry_lanes": [],
                     "turns": [],
                     "exit_lanes": [],
@@ -682,11 +682,11 @@ def extract_map_features(graph):
             tl_signals = []
             for signal_info in graph.lane_to_tl_signals[lane_name]:
                 to_lane_id = f"lane_{signal_info['to_lane']}"
-                if to_lane_id in ret:  # только если целевая полоса существуе
+                if to_lane_id in ret:  # only if the destination lane exists
                     tl_signals.append({
                         "phases": signal_info['phases'],
                         "to_lane": to_lane_id,
-                        "tl_id": signal_info['tl_id']  # опционально
+                        "tl_id": signal_info['tl_id']  # optional
                     })
             if tl_signals:
                 ret[base_lane_id]["tl_signals"] = tl_signals
