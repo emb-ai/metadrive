@@ -155,6 +155,20 @@ class EdgeNetworkNavigation(BaseNavigation):
             else:
                 self._target_checkpoints_index.append(idx + 1)
             return True
+
+        # Also match any peer lane on the same road edge as a checkpoint.
+        if isinstance(new_index, str) and ":" not in new_index:
+            new_edge = new_index.rsplit("_", 1)[0]
+            for j, cp in enumerate(self.checkpoints[self._target_checkpoints_index[1]:],
+                                   self._target_checkpoints_index[1]):
+                if isinstance(cp, str) and ":" not in cp and cp.rsplit("_", 1)[0] == new_edge:
+                    self._target_checkpoints_index = [j]
+                    if j + 1 == len(self.checkpoints):
+                        self._target_checkpoints_index.append(j)
+                    else:
+                        self._target_checkpoints_index.append(j + 1)
+                    return True
+
         return False
 
     def get_current_lateral_range(self, current_position, engine) -> float:
