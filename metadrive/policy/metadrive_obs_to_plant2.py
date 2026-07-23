@@ -184,11 +184,16 @@ BEV_COLORS = np.array([
 ], dtype=np.float32)
 
 
-def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, device="cpu"):
+def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0,
+                      device="cpu", return_semantic_map=False):
     """
     PlanT2 BEV: semantic index map (0-4) -> RGB via PlanTVariables.bev_colors.
     Supports both NodeRoadNetwork and EdgeRoadNetwork.
-    Returns: torch.Tensor (1, 3, 128, 128) float32.
+
+    Returns:
+      - default: torch.Tensor (1, 3, H, W) float32 RGB
+      - ``return_semantic_map=True``: uint8 ndarray (H, W) with class indices 0-4
+        (what PlanTDataset expects under ``bev_no_car_semantics/*.png``)
     """
     import torch
     from metadrive.constants import PGLineType, MetaDriveType
@@ -415,7 +420,10 @@ def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0, dev
         except Exception as e:
             print(f"Warning: Error rendering BEV for EdgeRoadNetwork: {e}")
             pass
-    
+
+    if return_semantic_map:
+        return sem_map
+
     # Convert to RGB
     rgb = BEV_COLORS[sem_map]
     bev_t = torch.from_numpy(rgb).permute(2, 0, 1).unsqueeze(0).float().to(device)
