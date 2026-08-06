@@ -2,13 +2,17 @@
 Convert MetaDrive obs/state into PlanT 2.0 input format (HFLM-compatible).
 
 Mirrors PlanT/dataset.py::generate_batch and PlanTVariables.
+
+Spatial PDD signs in ``x_objs`` come from the same ``bench.plant2_frames.collect_boxes``
+used by the train dump (class = PDD code, position, affects_ego=True).
 """
 import os
 import sys
+from pathlib import Path
 import numpy as np
 
 # PlanT object types (PlanTVariables.class_nums): 0=padding, 1=vehicle, 2=pedestrian, 3=static,
-# 4=stop_sign, 5=traffic_light, 6=emergency
+# 4=stop_sign, 5=traffic_light, 6=emergency, 7..=PDD codes in SIGN_CODES
 OBJ_TYPE_PADDING = 0
 OBJ_TYPE_VEHICLE = 1
 OBJ_TYPE_PEDESTRIAN = 2
@@ -17,102 +21,220 @@ OBJ_TYPE_STOP_SIGN = 4
 OBJ_TYPE_TRAFFIC_LIGHT = 5
 OBJ_TYPE_EMERGENCY = 6
 
-# PlanT2 BEV semantic indices (PlanTVariables.bev_colors)
-BEV_IDX_BACKGROUND = 0
-BEV_IDX_STREET = 1
-BEV_IDX_SIDEWALK = 2
-BEV_IDX_ALL_LINES = 3   # solid
-BEV_IDX_BROKEN_LINES = 4
+# traffic-rule-bench/ (…/metadrive/metadrive/policy/this.py → parents[3])
+_TRB_ROOT = Path(__file__).resolve().parents[3]
+_PER_SIGN_BENCH = _TRB_ROOT / "pdd-bench" / "scripts" / "per_sign_bench"
+_PDD_BENCH = _TRB_ROOT / "pdd-bench"
+_PLANT_T = _TRB_ROOT / "plant2" / "PlanT"
 
-# PlanTVariables.speed_cats
-SPEED_CATS = {50: 0, 80: 1, 100: 2, 120: 3}
-
-
-def _get_obj_type(obj):
-    """Determine the PlanT object type from a MetaDrive instance."""
-    from metadrive.component.vehicle.base_vehicle import BaseVehicle
-    from metadrive.component.traffic_participants.base_traffic_participant import BaseTrafficParticipant
-    from metadrive.component.traffic_participants.pedestrian import Pedestrian
-    from metadrive.component.static_object.traffic_object import TrafficCone, TrafficBarrier, TrafficWarning
-    from metadrive.component.traffic_light.base_traffic_light import BaseTrafficLight
-    from metadrive.constants import MetaDriveType
-
-    if isinstance(obj, BaseVehicle):
-        if getattr(obj, "break_down", False):
-            return OBJ_TYPE_EMERGENCY
-        return OBJ_TYPE_VEHICLE
-    if isinstance(obj, Pedestrian):
-        return OBJ_TYPE_PEDESTRIAN
-    if isinstance(obj, BaseTrafficParticipant):
-        return OBJ_TYPE_PEDESTRIAN
-    if isinstance(obj, BaseTrafficLight):
-        return OBJ_TYPE_TRAFFIC_LIGHT
-    if isinstance(obj, (TrafficCone, TrafficBarrier, TrafficWarning)):
-        return OBJ_TYPE_STATIC
-    return OBJ_TYPE_STATIC  # safer fallback than vehicle
+# Explicit PDD sign token ids (mirrors PlanT/util/sign_id.py SIGN_CODES order).
+_SIGN_FALLBACK = {
+    "2.1": 1, "2.3.1": 2, "2.3.2": 3, "2.3.3": 4, "2.4": 5, "2.5": 6,
+    "3.1": 7, "3.2": 8, "3.24": 9,
+    "4.2.1": 10, "4.2.2": 11, "4.2.3": 12, "4.3": 13, "4.6": 14,
+    "5.7.1": 15, "5.7.2": 16, "5.15.1": 17, "5.15.2": 18, "5.19": 19,
+    "5.21": 20, "5.31": 21,
+}
 
 
-def _get_obj_extent(obj):
-    """Get the object's extent (half-extents) in metres: (ext_x, ext_y)."""
-    w = getattr(obj, "top_down_width", 2.0) or 2.0
-    l = getattr(obj, "top_down_length", 4.0) or 4.0
-    ext_x = float(l) / 2.0
-    ext_y = float(w) / 2.0
-    return max(0.1, ext_x), max(0.1, ext_y)
+def _ensure_collect_boxes_import_paths() -> None:
+    """Make ``bench.plant2_frames``, ``traffic_signs``, ``util.sign_id`` importable."""
+    for p in (_PLANT_T, _PDD_BENCH, _PER_SIGN_BENCH):
+        ps = str(p)
+        if p.is_dir() and ps not in sys.path:
+            sys.path.insert(0, ps)
 
 
-def _get_obj_speed_kmh(obj):
-    """Object speed in km/h."""
-    if hasattr(obj, "velocity"):
-        v = obj.velocity
-        if hasattr(v, "__len__"):
-            return float(np.sqrt(v[0] ** 2 + v[1] ** 2)) * 3.6
-        return float(v) * 3.6
-    if hasattr(obj, "speed"):
-        return float(obj.speed) * 3.6
-    return 0.0
+def _import_collect_boxes():
+    """Literal train-dump collector: ``bench.plant2_frames.collect_boxes``."""
+    _ensure_collect_boxes_import_paths()
+    from bench.plant2_frames import collect_boxes
+    return collect_boxes
 
 
-def _passes_distance_filter(x, y, obj_type, max_distance=50.0, range_factor_front=2.0, tl_stop_radius=30.0):
+def _import_resolve_pdd_code_from_sign():
+    _ensure_collect_boxes_import_paths()
+    from bench.plant2_frames import resolve_pdd_code_from_sign
+    return resolve_pdd_code_from_sign
+
+
+def _yaw_rad_to_deg(yaw_rad: float) -> float:
+    """Match PlanTDataset.rad2deg / normalize_angle_degree."""
+    x = float(np.rad2deg(yaw_rad)) % 360.0
+    if x > 180.0:
+        x -= 360.0
+    return x
+
+
+def _get_type_nums_and_sign_like():
+    """PlanTVariables.class_nums + PDD sign class set (train mapping)."""
+    _ensure_collect_boxes_import_paths()
+    try:
+        from plant_variables import PlanTVariables
+        type_nums = dict(PlanTVariables.class_nums)
+        sign_like = {"stop_sign"} | set(PlanTVariables.pdd_object_classes)
+        car_types = set(PlanTVariables.car_types)
+        return type_nums, sign_like, car_types
+    except Exception:
+        # Minimal fallback if PlanT is not on path yet.
+        type_nums = {
+            "car": 1.0, "walker": 2.0, "static": 3.0, "stop_sign": 4.0,
+            "traffic_light": 5.0, "emergency": 6.0,
+        }
+        for i, code in enumerate(_SIGN_FALLBACK):
+            type_nums[code] = float(7 + i)
+        sign_like = {"stop_sign"} | set(_SIGN_FALLBACK)
+        return type_nums, sign_like, {"car", "walker", "emergency"}
+
+
+def _maybe_move_yield_sign_onto_npc(engine, ego_vehicle) -> None:
+    """Diagnostic: teleport PDD sign mesh onto the nearest non-ego vehicle.
+
+    Enabled by ``PLANT2_REPLACE_NPC_WITH_MOVING_SIGN``:
+      ``1`` / ``true`` — prefer YieldSign, else StopSign, else first sign
+      ``2.4`` / ``2.5`` — prefer that PDD code / class name
+    Combined with skipping car tokens in ``boxes_to_objects_list``, PlanT sees a
+    *moving* sign-class token at the NPC pose (dump-like).
     """
-    PlanT2: elliptical filter for regular objects, 30 m circle for TL/stop.
-    x, y are in ego frame (x forward).
-    """
-    if obj_type in (OBJ_TYPE_TRAFFIC_LIGHT, OBJ_TYPE_STOP_SIGN):
-        return x * x + y * y <= tl_stop_radius * tl_stop_radius
-    x_div = range_factor_front * range_factor_front if x > 0 else 1.0
-    return x * x / x_div + y * y <= max_distance * max_distance
+    flag = (os.environ.get("PLANT2_REPLACE_NPC_WITH_MOVING_SIGN") or "").strip()
+    if not flag:
+        return
+    sign_mgr = getattr(engine, "traffic_sign_manager", None)
+    if sign_mgr is None:
+        return
+    signs = [s for s in (getattr(sign_mgr, "signs", None) or []) if s is not None]
+    if not signs:
+        return
+
+    want = flag if flag not in ("1", "true", "True") else None
+
+    def _rank(s) -> int:
+        name = type(s).__name__
+        pdd = str(getattr(s, "pdd_code", None) or "")
+        if want == "2.5":
+            if "Stop" in name or pdd == "2.5":
+                return 0
+            return 2
+        if want == "2.4":
+            if "Yield" in name or pdd == "2.4":
+                return 0
+            return 2
+        # generic: Yield first, then Stop, then anything
+        if "Yield" in name or pdd == "2.4":
+            return 0
+        if "Stop" in name or pdd == "2.5":
+            return 1
+        return 2
+
+    signs_sorted = sorted(signs, key=_rank)
+    sign = signs_sorted[0]
+
+    ego_id = getattr(ego_vehicle, "id", None)
+    candidates = []
+    traffic = getattr(engine, "traffic_manager", None)
+    vehicles = list(getattr(traffic, "vehicles", None) or [])
+    if not vehicles and hasattr(engine, "get_objects"):
+        try:
+            vehicles = [
+                o for o in engine.get_objects().values()
+                if o is not None and type(o).__name__.endswith("Vehicle")
+            ]
+        except Exception:
+            vehicles = []
+    for v in vehicles:
+        if v is None or v is ego_vehicle:
+            continue
+        if ego_id is not None and getattr(v, "id", None) == ego_id:
+            continue
+        try:
+            pos = np.asarray(v.position[:2], dtype=np.float64)
+            ego_pos = np.asarray(ego_vehicle.position[:2], dtype=np.float64)
+            dist = float(np.linalg.norm(pos - ego_pos))
+        except Exception:
+            continue
+        candidates.append((dist, v))
+    if not candidates:
+        return
+    candidates.sort(key=lambda t: t[0])
+    npc = candidates[0][1]
+    try:
+        pos = npc.position
+        heading = float(getattr(npc, "heading_theta", 0.0))
+        if hasattr(sign, "set_position"):
+            z = float(pos[2]) if len(pos) > 2 else 0.5
+            sign.set_position([float(pos[0]), float(pos[1]), z])
+        if hasattr(sign, "set_heading_theta"):
+            sign.set_heading_theta(heading)
+        elif hasattr(sign, "_heading_theta"):
+            sign._heading_theta = heading
+        if hasattr(sign, "_position"):
+            sign._position = np.array([float(pos[0]), float(pos[1])], dtype=np.float64)
+    except Exception as exc:
+        if os.environ.get("PLANT2_DEBUG_BOXES"):
+            print(f"[PLANT2_REPLACE_NPC_WITH_MOVING_SIGN] failed: {exc}", flush=True)
 
 
-def collect_objects_ego_frame(
-    engine,
-    ego_vehicle,
-    max_objects=30,
-    max_distance=50.0,
-    range_factor_front=2.0,
-    tl_stop_radius=30.0,
-    include_stop_signs=True,
-):
-    """
-    Collect objects in ego frame. PlanT2: include TL only when Red/Yellow (affects_ego); stop only when affects_ego.
-    Elliptical filter: longer reach forward (range_factor_front).
-    """
-    from metadrive.utils.math import wrap_to_pi
-    from metadrive.constants import MetaDriveType
+def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
+    """Convert ``collect_boxes`` dicts → object tuples for ``objects_to_x_batch``.
 
-    ego_pos = np.array(ego_vehicle.position[:2])
-    ego_heading = float(ego_vehicle.heading_theta)
+    Mirrors PlanTDataset input construction (skip ego, cars + staticish/PDD).
+    Tuple: (type, x, y, yaw_deg, speed_kmh, ext_x, ext_y) with half-extents
+    (``objects_to_x_batch`` multiplies extents by 2, same as train full size).
+
+    Diagnostics (env):
+      PLANT2_REMAP_NPC_TO_SIGN=2.4|2.5
+          rewrite non-ego car tokens as that PDD class (pose kept).
+      PLANT2_REMAP_KEEP_SPEED=1
+          keep car speed_kmh after remap (default: force 0 like static signs).
+      PLANT2_REPLACE_NPC_WITH_MOVING_SIGN=1|2.4|2.5
+          skip car tokens entirely (sign mesh was teleported onto NPC).
+      PLANT2_DROP_STATIC_SIGN_WHEN_REMAP=1
+          drop boxes whose class equals the remap code (avoid double tokens).
+    """
+    type_nums, sign_like, car_types = _get_type_nums_and_sign_like()
+    remap_sign = (os.environ.get("PLANT2_REMAP_NPC_TO_SIGN") or "").strip()
+    remap_type = float(type_nums[remap_sign]) if remap_sign in type_nums else None
+    keep_speed = (os.environ.get("PLANT2_REMAP_KEEP_SPEED") or "").strip() in ("1", "true", "True")
+    replace_flag = (os.environ.get("PLANT2_REPLACE_NPC_WITH_MOVING_SIGN") or "").strip()
+    replace_mode = bool(replace_flag)
+    drop_static = (os.environ.get("PLANT2_DROP_STATIC_SIGN_WHEN_REMAP") or "").strip() in (
+        "1", "true", "True",
+    )
+    # Ego is always first in collect_boxes.
+    labels = boxes[1:] if boxes and boxes[0].get("class") == "car" and boxes[0].get("id") == 0 else boxes
 
     objects = []
+    for x in labels:
+        cls_raw = x.get("class")
+        if not isinstance(cls_raw, str):
+            continue
+        cls_key = cls_raw if cls_raw in type_nums else cls_raw.lower()
+        if cls_key not in type_nums:
+            continue
+        if not include_stop_signs and cls_key in ("stop_sign", "2.5"):
+            continue
+        if drop_static and remap_sign and cls_key == remap_sign:
+            continue
 
-    def add_obj(obj, obj_type=None):
-        if obj is ego_vehicle:
-            return
-        if not hasattr(obj, "position"):
-            return
-        rel = np.array([obj.position[0] - ego_pos[0], obj.position[1] - ego_pos[1]])
-        local = ego_vehicle.convert_to_local_coordinates(rel, 0.0)
-        x, y = float(local[0]), -float(local[1])  # negate y: MetaDrive (fwd, LEFT) → CARLA (fwd, RIGHT)
+        pos = x.get("position") or [0.0, 0.0, 0.0]
+        extent = x.get("extent") or [1.0, 1.0, 0.75]
+        yaw_deg = _yaw_rad_to_deg(float(x.get("yaw", 0.0)))
+        # Half-extents as stored by collect_boxes; objects_to_x_batch does *2.
+        ext_x = float(extent[0])
+        ext_y = float(extent[1])
+
+        if cls_key in car_types:
+            if replace_mode and cls_key == "car":
+                # Sign mesh carries the moving PDD token; drop the car token.
+                continue
+            speed_kmh = float(x.get("speed", 0.0)) * 3.6
+            if remap_type is not None and cls_key == "car":
+                objects.append((
+                    remap_type,
+                    float(pos[0]), float(pos[1]), yaw_deg,
+                    speed_kmh if keep_speed else 0.0,
+                    ext_x, ext_y,
+y = float(local[0]), -float(local[1])  # negate y: MetaDrive (fwd, LEFT) → CARLA (fwd, RIGHT)
         t = obj_type if obj_type is not None else _get_obj_type(obj)
 
         # TL: only Red/Yellow (MetaDrive has no affects_ego — include if Red/Yellow)
@@ -172,6 +294,51 @@ def get_speed_limit_idx(speed_limit_kmh=None):
     if speed_limit_kmh is None:
         return 1
     return SPEED_CATS.get(speed_limit_kmh, 1)
+
+
+def _sign_code_to_id(code):
+    try:
+        _ensure_collect_boxes_import_paths()
+        from util.sign_id import sign_code_to_id as _fn
+        return _fn(code)
+    except Exception:
+        if not code:
+            return 0
+        return _SIGN_FALLBACK.get(str(code).strip(), 0)
+
+
+def resolve_sign_code_from_engine(engine, explicit_code=None):
+    """Best-effort PDD code from env config or traffic_sign_manager.
+
+    Uses the same ``resolve_pdd_code_from_sign`` as the train dump when possible.
+    """
+    if explicit_code:
+        return str(explicit_code)
+    cfg = getattr(engine, "global_config", None) or {}
+    if hasattr(cfg, "get"):
+        for key in ("sign_type", "sign_code", "pdd_code"):
+            val = cfg.get(key)
+            if val:
+                return str(val)
+    mgr = getattr(engine, "traffic_sign_manager", None)
+    if mgr is None:
+        return None
+    try:
+        resolve_pdd = _import_resolve_pdd_code_from_sign()
+    except Exception:
+        resolve_pdd = None
+    for sign in getattr(mgr, "signs", []) or []:
+        if sign is None:
+            continue
+        if resolve_pdd is not None:
+            code = resolve_pdd(sign)
+            if code:
+                return str(code)
+        for attr in ("pdd_code", "sign_code", "sign_type", "code"):
+            val = getattr(sign, attr, None)
+            if val:
+                return str(val)
+    return None
 
 
 # PlanTVariables.bev_colors — palette for the semantic BEV (imagenet-friendly)
@@ -444,6 +611,8 @@ def metadrive_obs_to_plant2_batch(
     bev_size_meters=64.0,
     device="cpu",
     include_stop_signs=True,
+    sign_code=None,
+    include_sign_id=False,
 ):
     """
     Convert MetaDrive state into a batch for PlanT/HFLM.
@@ -464,13 +633,26 @@ def metadrive_obs_to_plant2_batch(
         route_ego_20x2 = np.vstack([route_ego_20x2, pad])
     route_ego_20x2 = route_ego_20x2[:num_route_points]
 
-    objects = collect_objects_ego_frame(
-        engine, ego_vehicle,
-        max_objects=max_objects,
-        max_distance=max_distance,
-        range_factor_front=range_factor_front,
-        include_stop_signs=include_stop_signs,
-    )
+    # Prefer train-dump collector (includes spatial PDD signs in x_objs).
+    try:
+        objects = collect_objects_ego_frame_from_plant2_boxes(
+            engine, ego_vehicle,
+            max_objects=max_objects,
+            max_distance=max_distance,
+            range_factor_front=range_factor_front,
+            include_stop_signs=include_stop_signs,
+        )
+    except Exception as exc:
+        if os.environ.get("PLANT2_DEBUG_BOXES"):
+            print(f"[metadrive_obs_to_plant2] collect_boxes failed ({exc}); "
+                  f"falling back to legacy collect_objects_ego_frame", flush=True)
+        objects = collect_objects_ego_frame(
+            engine, ego_vehicle,
+            max_objects=max_objects,
+            max_distance=max_distance,
+            range_factor_front=range_factor_front,
+            include_stop_signs=include_stop_signs,
+        )
     x_list, num_objs = objects_to_x_batch(objects, max_objects)
 
     # IMPORTANT for batching: pad/truncate pool to fixed (max_objects+1, 7)
@@ -500,6 +682,10 @@ def metadrive_obs_to_plant2_batch(
         "y_objs": None,
     }
 
+    if include_sign_id:
+        code = resolve_sign_code_from_engine(engine, explicit_code=sign_code)
+        batch["sign_id"] = torch.tensor([_sign_code_to_id(code)], dtype=torch.long, device=device)
+
     if input_bev:
         bev_t = render_bev_plant2(
             engine, ego_vehicle,
@@ -521,3 +707,4 @@ def metadrive_obs_to_plant2_batch(
 
 
     return batch
+        _maybe_move_yield_sign_onto_npc(engine, ego_vehicle)
