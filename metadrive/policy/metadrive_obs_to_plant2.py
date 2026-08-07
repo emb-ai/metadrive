@@ -234,7 +234,118 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
                     float(pos[0]), float(pos[1]), yaw_deg,
                     speed_kmh if keep_speed else 0.0,
                     ext_x, ext_y,
-y = float(local[0]), -float(local[1])  # negate y: MetaDrive (fwd, LEFT) → CARLA (fwd, RIGHT)
+                ))
+            else:
+                objects.append((
+                    float(type_nums[cls_key]),
+                    float(pos[0]), float(pos[1]), yaw_deg,
+                    speed_kmh, ext_x, ext_y,
+                ))
+            continue
+
+        # Static / traffic-light / PDD sign rows. Train writes speed 0.0 for
+        # these and keeps sign-like ones only when they affect ego
+        # (PlanTDataset._keep_staticish), so mirror both here.
+        if cls_key == "traffic_light":
+            if x.get("state") not in ("Red", "Yellow") or not x.get("affects_ego"):
+                continue
+        elif cls_key in sign_like and not x.get("affects_ego"):
+            continue
+        objects.append((
+            float(type_nums[cls_key]),
+            float(pos[0]), float(pos[1]), yaw_deg,
+            0.0, ext_x, ext_y,
+        ))
+
+    objects.sort(key=lambda o: o[1] ** 2 + o[2] ** 2)
+    return objects[:max_objects]
+
+
+def _get_obj_type(obj):
+    """Determine the PlanT object type from a MetaDrive instance."""
+    from metadrive.component.vehicle.base_vehicle import BaseVehicle
+    from metadrive.component.traffic_participants.base_traffic_participant import BaseTrafficParticipant
+    from metadrive.component.traffic_participants.pedestrian import Pedestrian
+    from metadrive.component.static_object.traffic_object import TrafficCone, TrafficBarrier, TrafficWarning
+    from metadrive.component.traffic_light.base_traffic_light import BaseTrafficLight
+    from metadrive.constants import MetaDriveType
+
+    if isinstance(obj, BaseVehicle):
+        if getattr(obj, "break_down", False):
+            return OBJ_TYPE_EMERGENCY
+        return OBJ_TYPE_VEHICLE
+    if isinstance(obj, Pedestrian):
+        return OBJ_TYPE_PEDESTRIAN
+    if isinstance(obj, BaseTrafficParticipant):
+        return OBJ_TYPE_PEDESTRIAN
+    if isinstance(obj, BaseTrafficLight):
+        return OBJ_TYPE_TRAFFIC_LIGHT
+    if isinstance(obj, (TrafficCone, TrafficBarrier, TrafficWarning)):
+        return OBJ_TYPE_STATIC
+    return OBJ_TYPE_STATIC  # safer fallback than vehicle
+
+
+def _get_obj_extent(obj):
+    """Get the object's extent (half-extents) in metres: (ext_x, ext_y)."""
+    w = getattr(obj, "top_down_width", 2.0) or 2.0
+    l = getattr(obj, "top_down_length", 4.0) or 4.0
+    ext_x = float(l) / 2.0
+    ext_y = float(w) / 2.0
+    return max(0.1, ext_x), max(0.1, ext_y)
+
+
+def _get_obj_speed_kmh(obj):
+    """Object speed in km/h."""
+    if hasattr(obj, "velocity"):
+        v = obj.velocity
+        if hasattr(v, "__len__"):
+            return float(np.sqrt(v[0] ** 2 + v[1] ** 2)) * 3.6
+        return float(v) * 3.6
+    if hasattr(obj, "speed"):
+        return float(obj.speed) * 3.6
+    return 0.0
+
+
+def _passes_distance_filter(x, y, obj_type, max_distance=50.0, range_factor_front=2.0, tl_stop_radius=30.0):
+    """
+    PlanT2: elliptical filter for regular objects, 30 m circle for TL/stop.
+    x, y are in ego frame (x forward).
+    """
+    if obj_type in (OBJ_TYPE_TRAFFIC_LIGHT, OBJ_TYPE_STOP_SIGN):
+        return x * x + y * y <= tl_stop_radius * tl_stop_radius
+    x_div = range_factor_front * range_factor_front if x > 0 else 1.0
+    return x * x / x_div + y * y <= max_distance * max_distance
+
+
+def collect_objects_ego_frame(
+    engine,
+    ego_vehicle,
+    max_objects=30,
+    max_distance=50.0,
+    range_factor_front=2.0,
+    tl_stop_radius=30.0,
+    include_stop_signs=True,
+):
+    """
+    Collect objects in ego frame. PlanT2: include TL only when Red/Yellow (affects_ego); stop only when affects_ego.
+    Elliptical filter: longer reach forward (range_factor_front).
+    """
+    from metadrive.utils.math import wrap_to_pi
+    from metadrive.constants import MetaDriveType
+
+    ego_pos = np.array(ego_vehicle.position[:2])
+    ego_heading = float(ego_vehicle.heading_theta)
+
+    objects = []
+
+    def add_obj(obj, obj_type=None):
+        if obj is ego_vehicle:
+            return
+        if not hasattr(obj, "position"):
+            return
+        rel = np.array([obj.position[0] - ego_pos[0], obj.position[1] - ego_pos[1]])
+        local = ego_vehicle.convert_to_local_coordinates(rel, 0.0)
+        x, y = float(local[0]), -float(local[1])  # negate y: MetaDrive (fwd, LEFT) → CARLA (fwd, RIGHT)
         t = obj_type if obj_type is not None else _get_obj_type(obj)
 
         # TL: only Red/Yellow (MetaDrive has no affects_ego — include if Red/Yellow)
@@ -270,6 +381,23 @@ y = float(local[0]), -float(local[1])  # negate y: MetaDrive (fwd, LEFT) → CAR
 
     objects.sort(key=lambda o: o[1] ** 2 + o[2] ** 2)
     return objects[:max_objects]
+
+
+def collect_objects_ego_frame_from_plant2_boxes(engine, ego_vehicle, max_objects=30,
+                                                max_distance=50.0, range_factor_front=2.0,
+                                                include_stop_signs=True):
+    """Objects via the train-dump collector, so eval and training agree.
+
+    ``bench.plant2_frames.collect_boxes`` writes the training frames and emits
+    PDD signs with their own class code; the legacy collector below types every
+    sign as ``static``, which is why a finetuned model never recognised them.
+    """
+    collect_boxes = _import_collect_boxes()
+    boxes = collect_boxes(engine, ego_vehicle,
+                          max_distance=max_distance,
+                          range_factor_front=range_factor_front)
+    return boxes_to_objects_list(boxes, max_objects=max_objects,
+                                 include_stop_signs=include_stop_signs)
 
 
 def objects_to_x_batch(objects_list, max_objects=30):
@@ -634,7 +762,12 @@ def metadrive_obs_to_plant2_batch(
     route_ego_20x2 = route_ego_20x2[:num_route_points]
 
     # Prefer train-dump collector (includes spatial PDD signs in x_objs).
+    # PLANT2_SIGN_OBJS=0 forces the legacy collector, which types every sign as
+    # `static` — the pre-fix behaviour, kept so the A/B can isolate this channel.
+    _sign_objs = (os.environ.get("PLANT2_SIGN_OBJS", "1") or "1").strip() not in ("0", "false", "False")
     try:
+        if not _sign_objs:
+            raise RuntimeError("PLANT2_SIGN_OBJS=0")
         objects = collect_objects_ego_frame_from_plant2_boxes(
             engine, ego_vehicle,
             max_objects=max_objects,
@@ -707,4 +840,3 @@ def metadrive_obs_to_plant2_batch(
 
 
     return batch
-        _maybe_move_yield_sign_onto_npc(engine, ego_vehicle)
