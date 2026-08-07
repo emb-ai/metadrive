@@ -234,42 +234,74 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
                     float(pos[0]), float(pos[1]), yaw_deg,
                     speed_kmh if keep_speed else 0.0,
                     ext_x, ext_y,
-y = float(local[0]), -float(local[1])  # negate y: MetaDrive (fwd, LEFT) → CARLA (fwd, RIGHT)
-        t = obj_type if obj_type is not None else _get_obj_type(obj)
+                ))
+            else:
+                objects.append((
+                    float(type_nums[cls_key]),
+                    float(pos[0]), float(pos[1]), yaw_deg,
+                    speed_kmh,
+                    ext_x, ext_y,
+                ))
+            continue
 
-        # TL: only Red/Yellow (MetaDrive has no affects_ego — include if Red/Yellow)
-        if t == OBJ_TYPE_TRAFFIC_LIGHT:
-            status = getattr(obj, "status", MetaDriveType.LIGHT_UNKNOWN)
-            if status not in (MetaDriveType.LIGHT_RED, MetaDriveType.LIGHT_YELLOW):
-                return
-        # Optional stop-sign exclusion for ablation/debug.
-        if t == OBJ_TYPE_STOP_SIGN and not include_stop_signs:
-            return
-
-        if not _passes_distance_filter(x, y, t, max_distance, range_factor_front, tl_stop_radius):
-            return
-
-        yaw_deg = np.degrees(wrap_to_pi(float(obj.heading_theta) - ego_heading))
-        speed_kmh = _get_obj_speed_kmh(obj)
-        ext_x, ext_y = _get_obj_extent(obj)
-        objects.append((t, x, y, yaw_deg, speed_kmh, ext_x, ext_y))
-
-    vehicles = list(getattr(engine.traffic_manager, "vehicles", []))
-    for v in vehicles:
-        add_obj(v)
-
-    if hasattr(engine, "get_objects"):
-        for obj in engine.get_objects(lambda o: hasattr(o, "position")).values():
-            if obj in vehicles or obj is ego_vehicle:
+        if cls_key == "traffic_light":
+            if x.get("state") not in ("Red", "Yellow") or not x.get("affects_ego"):
                 continue
-            add_obj(obj)
+        elif cls_key in sign_like:
+            if not x.get("affects_ego", True):
+                continue
 
-    if hasattr(engine, "object_manager") and engine.object_manager is not None:
-        for obj in getattr(engine.object_manager, "spawned_objects", {}).values():
-            add_obj(obj)
+        objects.append((
+            float(type_nums[cls_key]),
+            float(pos[0]), float(pos[1]), yaw_deg,
+            0.0,
+            ext_x, ext_y,
+        ))
 
     objects.sort(key=lambda o: o[1] ** 2 + o[2] ** 2)
     return objects[:max_objects]
+
+
+def collect_objects_ego_frame_from_plant2_boxes(
+    engine,
+    ego_vehicle,
+    max_objects=30,
+    max_distance=50.0,
+    range_factor_front=2.0,
+    include_stop_signs=True,
+):
+    """Train-dump path: ``collect_boxes`` → ``boxes_to_objects_list`` (ego frame)."""
+    collect_boxes = _import_collect_boxes()
+    boxes = collect_boxes(
+        engine,
+        ego_vehicle,
+        max_distance=max_distance,
+        range_factor_front=range_factor_front,
+    )
+    return boxes_to_objects_list(
+        boxes,
+        max_objects=max_objects,
+        include_stop_signs=include_stop_signs,
+    )
+
+
+def collect_objects_ego_frame(
+    engine,
+    ego_vehicle,
+    max_objects=30,
+    max_distance=50.0,
+    range_factor_front=2.0,
+    include_stop_signs=True,
+):
+    """Legacy alias — same as the plant2_boxes collector."""
+    return collect_objects_ego_frame_from_plant2_boxes(
+        engine,
+        ego_vehicle,
+        max_objects=max_objects,
+        max_distance=max_distance,
+        range_factor_front=range_factor_front,
+        include_stop_signs=include_stop_signs,
+    )
 
 
 def objects_to_x_batch(objects_list, max_objects=30):
@@ -633,6 +665,8 @@ def metadrive_obs_to_plant2_batch(
         route_ego_20x2 = np.vstack([route_ego_20x2, pad])
     route_ego_20x2 = route_ego_20x2[:num_route_points]
 
+    _maybe_move_yield_sign_onto_npc(engine, ego_vehicle)
+
     # Prefer train-dump collector (includes spatial PDD signs in x_objs).
     try:
         objects = collect_objects_ego_frame_from_plant2_boxes(
@@ -707,4 +741,3 @@ def metadrive_obs_to_plant2_batch(
 
 
     return batch
-        _maybe_move_yield_sign_onto_npc(engine, ego_vehicle)
