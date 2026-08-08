@@ -192,6 +192,9 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
           drop boxes whose class equals the remap code (avoid double tokens).
     """
     type_nums, sign_like, car_types = _get_type_nums_and_sign_like()
+    # PLANT2_SIGN_OBJS=0 demotes PDD signs back to the generic `static` class —
+    # the pre-fix behaviour, so an A/B can isolate what the sign class buys.
+    sign_objs = (os.environ.get("PLANT2_SIGN_OBJS", "1") or "1").strip() not in ("0", "false", "False")
     remap_sign = (os.environ.get("PLANT2_REMAP_NPC_TO_SIGN") or "").strip()
     remap_type = float(type_nums[remap_sign]) if remap_sign in type_nums else None
     keep_speed = (os.environ.get("PLANT2_REMAP_KEEP_SPEED") or "").strip() in ("1", "true", "True")
@@ -237,7 +240,8 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
                 ))
             else:
                 objects.append((
-                    float(type_nums[cls_key]),
+                    float(type_nums[cls_key]) if (sign_objs or cls_key not in sign_like)
+                    else float(type_nums["static"]),
                     float(pos[0]), float(pos[1]), yaw_deg,
                     speed_kmh,
                     ext_x, ext_y,
@@ -252,7 +256,8 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
                 continue
 
         objects.append((
-            float(type_nums[cls_key]),
+            float(type_nums[cls_key]) if (sign_objs or cls_key not in sign_like)
+                    else float(type_nums["static"]),
             float(pos[0]), float(pos[1]), yaw_deg,
             0.0,
             ext_x, ext_y,
