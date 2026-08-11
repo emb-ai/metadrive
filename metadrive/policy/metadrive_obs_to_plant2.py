@@ -378,6 +378,15 @@ def resolve_sign_code_from_engine(engine, explicit_code=None):
     return None
 
 
+# Semantic class indices for the BEV map. The EdgeRoadNetwork branch references
+# these by name; without them it raised NameError on every frame, the warning
+# swallowed it, and SUMO scenes fed the model a BEV with no street layer.
+BEV_IDX_BACKGROUND = 0
+BEV_IDX_STREET = 1
+BEV_IDX_SIDEWALK = 2
+BEV_IDX_ALL_LINES = 3
+BEV_IDX_BROKEN_LINES = 4
+
 # PlanTVariables.bev_colors — palette for the semantic BEV (imagenet-friendly)
 BEV_COLORS = np.array([
     [0.485, 0.456, 0.406],  # 0 Background (Imagenet mean)
