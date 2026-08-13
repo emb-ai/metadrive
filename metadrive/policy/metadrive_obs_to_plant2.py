@@ -21,6 +21,13 @@ OBJ_TYPE_STOP_SIGN = 4
 OBJ_TYPE_TRAFFIC_LIGHT = 5
 OBJ_TYPE_EMERGENCY = 6
 
+# PlanT BEV semantic class indices (matches PlanTVariables.bev_colors).
+BEV_IDX_BACKGROUND = 0
+BEV_IDX_STREET = 1
+BEV_IDX_SIDEWALK = 2
+BEV_IDX_ALL_LINES = 3
+BEV_IDX_BROKEN_LINES = 4
+
 # traffic-rule-bench/ (…/metadrive/metadrive/policy/this.py → parents[3])
 _TRB_ROOT = Path(__file__).resolve().parents[3]
 _PER_SIGN_BENCH = _TRB_ROOT / "pdd-bench" / "scripts" / "per_sign_bench"
@@ -383,11 +390,22 @@ BEV_COLORS = np.array([
 ], dtype=np.float32)
 
 
-def render_bev_plant2(engine, ego_vehicle, resolution=128, size_meters=64.0,
+# Dump / PlanTDataset: 256 px over 64 m (4 px/m). Model input is center-cropped 128@32 m.
+_DUMP_BEV_RESOLUTION = 256
+_DUMP_BEV_SIZE_METERS = 64.0
+_MODEL_BEV_CROP = 64  # PlanTDataset: bev[..., 64:-64, 64:-64]
+_MODEL_BEV_RESOLUTION = _DUMP_BEV_RESOLUTION - 2 * _MODEL_BEV_CROP  # 128
+
+
+def render_bev_plant2(engine, ego_vehicle, resolution=_DUMP_BEV_RESOLUTION,
+                      size_meters=_DUMP_BEV_SIZE_METERS,
                       device="cpu", return_semantic_map=False):
     """
     PlanT2 BEV: semantic index map (0-4) -> RGB via PlanTVariables.bev_colors.
     Supports both NodeRoadNetwork and EdgeRoadNetwork.
+
+    Dump / train default: resolution=256, size_meters=64.0 (4 px/m over ±32 m).
+    Model input applies rot90 + center crop via ``metadrive_obs_to_plant2_batch``.
 
     Returns:
       - default: torch.Tensor (1, 3, H, W) float32 RGB
@@ -639,8 +657,8 @@ def metadrive_obs_to_plant2_batch(
     range_factor_front=2.0,
     input_bev=False,
     input_ego_speed=False,
-    bev_resolution=128,
-    bev_size_meters=64.0,
+    bev_resolution=_DUMP_BEV_RESOLUTION,
+    bev_size_meters=_DUMP_BEV_SIZE_METERS,
     device="cpu",
     include_stop_signs=True,
     sign_code=None,
@@ -649,6 +667,9 @@ def metadrive_obs_to_plant2_batch(
     """
     Convert MetaDrive state into a batch for PlanT/HFLM.
     Mirrors PlanT generate_batch: idxs (B, maxseq) with zeros as padding, x_objs is a pool.
+
+    BEV (when input_bev): render dump-scale map then PlanTDataset transform
+    (rot90 k=+1, center crop 64:-64) → 128×128 @ 4 px/m covering 32 m (±16 m).
     """
     import torch
     from metadrive.policy.plant_policy import get_route_points_ego_frame
@@ -728,11 +749,22 @@ def metadrive_obs_to_plant2_batch(
             device=device,
         )
         if bev_t is not None:
-            # BEV from render_bev_plant2 already has forward=top,
-            # matching CARLA convention after rot90 CCW — no extra rotation needed.
-            batch["BEV"] = torch.rot90(bev_t, k=-1, dims=[2, 3])
+            # Match PlanTDataset / CARLA PlanT_agent: rot90 CCW (k=+1).
+            # MetaDrive render_bev_plant2 writes forward=up (same as on-disk dump PNGs).
+            # Dataset loads those PNGs with torch.rot90(..., dims=(1,2)) i.e. k=+1.
+            # Previous k=-1 was 180° opposite of training (empirically mse=0 for k=+1,
+            # equal to rot180(train) for k=-1).
+            bev_t = torch.rot90(bev_t, k=1, dims=[2, 3])
+            # Match PlanTDataset crop on 256 dump → 128 covering 32 m at 4 px/m.
+            if bev_t.shape[-1] == _DUMP_BEV_RESOLUTION and bev_t.shape[-2] == _DUMP_BEV_RESOLUTION:
+                c = _MODEL_BEV_CROP
+                bev_t = bev_t[:, :, c:-c, c:-c]
+            batch["BEV"] = bev_t
         else:
-            batch["BEV"] = torch.zeros(1, 3, bev_resolution, bev_resolution, dtype=torch.float32, device=device)
+            batch["BEV"] = torch.zeros(
+                1, 3, _MODEL_BEV_RESOLUTION, _MODEL_BEV_RESOLUTION,
+                dtype=torch.float32, device=device,
+            )
 
 
     if input_ego_speed:
