@@ -190,6 +190,12 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
           skip car tokens entirely (sign mesh was teleported onto NPC).
       PLANT2_DROP_STATIC_SIGN_WHEN_REMAP=1
           drop boxes whose class equals the remap code (avoid double tokens).
+      PLANT2_OBJ_ORDER=dump|dist
+          token order. `dist` (default) sorts by distance to ego; `dump`
+          reproduces training order — cars in box order, then static-ish and
+          signs — because the trunk is a BERT and its position embeddings make
+          the order part of the input. Under `dump` the cap still keeps the
+          nearest `max_objects`, it just emits them in training order.
     """
     type_nums, sign_like, car_types = _get_type_nums_and_sign_like()
     # PLANT2_SIGN_OBJS=0 demotes PDD signs back to the generic `static` class —
@@ -206,7 +212,10 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
     # Ego is always first in collect_boxes.
     labels = boxes[1:] if boxes and boxes[0].get("class") == "car" and boxes[0].get("id") == 0 else boxes
 
-    objects = []
+    # Kept apart so `dump` order can put every car before the static-ish tokens,
+    # the way PlanTDataset builds input_objects (cars list, then the rest).
+    cars: list = []
+    staticish: list = []
     for x in labels:
         cls_raw = x.get("class")
         if not isinstance(cls_raw, str):
@@ -232,14 +241,14 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
                 continue
             speed_kmh = float(x.get("speed", 0.0)) * 3.6
             if remap_type is not None and cls_key == "car":
-                objects.append((
+                cars.append((
                     remap_type,
                     float(pos[0]), float(pos[1]), yaw_deg,
                     speed_kmh if keep_speed else 0.0,
                     ext_x, ext_y,
                 ))
             else:
-                objects.append((
+                cars.append((
                     float(type_nums[cls_key]) if (sign_objs or cls_key not in sign_like)
                     else float(type_nums["static"]),
                     float(pos[0]), float(pos[1]), yaw_deg,
@@ -255,7 +264,7 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
             if not x.get("affects_ego", True):
                 continue
 
-        objects.append((
+        staticish.append((
             float(type_nums[cls_key]) if (sign_objs or cls_key not in sign_like)
                     else float(type_nums["static"]),
             float(pos[0]), float(pos[1]), yaw_deg,
@@ -263,8 +272,17 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
             ext_x, ext_y,
         ))
 
-    objects.sort(key=lambda o: o[1] ** 2 + o[2] ** 2)
-    return objects[:max_objects]
+    objects = cars + staticish
+    dist2 = lambda o: o[1] ** 2 + o[2] ** 2  # noqa: E731
+    order = (os.environ.get("PLANT2_OBJ_ORDER") or "dist").strip().lower()
+    if len(objects) > max_objects:
+        # Cap by proximity in both modes; `dump` only differs in the order the
+        # survivors are emitted, so truncation never silently drops the sign.
+        nearest = sorted(range(len(objects)), key=lambda i: dist2(objects[i]))[:max_objects]
+        objects = [objects[i] for i in sorted(nearest)]
+    if order != "dump":
+        objects.sort(key=dist2)
+    return objects
 
 
 def collect_objects_ego_frame_from_plant2_boxes(
@@ -713,7 +731,13 @@ def metadrive_obs_to_plant2_batch(
         x_list = x_list + [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]] * (pool_size - len(x_list))
 
     x_batch_objs = torch.tensor(x_list, dtype=torch.float32, device=device)
+    # generate_batch sets maxseq to the batch's own object count, so training
+    # sequences are as long as the scene needs. A fixed 30 here pads the tail
+    # and pushes speed_token — the token the ego-speed head reads — to an
+    # absolute position the model may never have seen (BERT position embeddings).
     maxseq = max_objects
+    if (os.environ.get("PLANT2_SEQ_FIT") or "").strip() in ("1", "true", "True"):
+        maxseq = max(1, num_objs)
     batch_idxs = torch.zeros((1, maxseq), dtype=torch.int32, device=device)
     if num_objs > 0:
         batch_idxs[0, :num_objs] = torch.arange(1, 1 + num_objs, dtype=torch.int32, device=device)
