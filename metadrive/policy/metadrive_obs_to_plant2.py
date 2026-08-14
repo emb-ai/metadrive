@@ -345,10 +345,26 @@ def objects_to_x_batch(objects_list, max_objects=30):
 
 
 def get_speed_limit_idx(speed_limit_kmh=None):
-    """PlanTVariables.speed_cats. Defaults to 1 (80 km/h) when no limit is set."""
+    """PlanTVariables.speed_cats. Defaults to 1 (80 km/h) when no limit is set.
+
+    `SPEED_CATS` was never defined in this module, so any caller passing a real
+    limit hit a NameError instead of getting a token. Read the table from
+    PlanTVariables and, like PlanTDataset, fall back to the nearest known limit
+    rather than to a fixed bin -- posted PDD limits (20/40/60) are not in the
+    table and training maps them to 50, not to 80.
+    """
     if speed_limit_kmh is None:
         return 1
-    return SPEED_CATS.get(speed_limit_kmh, 1)
+    _ensure_collect_boxes_import_paths()
+    try:
+        from plant_variables import PlanTVariables
+        cats = dict(PlanTVariables.speed_cats)
+    except Exception:
+        cats = {50: 0, 80: 1, 100: 2, 120: 3}
+    key = int(round(float(speed_limit_kmh)))
+    if key not in cats:
+        key = min(cats, key=lambda k: abs(k - key))
+    return cats[key]
 
 
 def _sign_code_to_id(code):
