@@ -268,7 +268,11 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
             float(type_nums[cls_key]) if (sign_objs or cls_key not in sign_like)
                     else float(type_nums["static"]),
             float(pos[0]), float(pos[1]), yaw_deg,
-            0.0,
+            # Mirrors PlanTDataset: the slot is 0 for anything static, except a
+            # speed-limit plate, whose own number rides here in km/h. Zeroing
+            # it at eval while training carried the value would hide the only
+            # channel that distinguishes 20 from 60.
+            float(x.get("speed", 0.0)) * 3.6,
             ext_x, ext_y,
         ))
 
