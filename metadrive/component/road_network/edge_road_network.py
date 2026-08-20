@@ -7,7 +7,6 @@ from metadrive.component.road_network.base_road_network import LaneIndex
 from metadrive.scenario.scenario_description import ScenarioDescription as SD
 from metadrive.utils.math import get_boxes_bounding_box
 from metadrive.utils.pg.utils import get_lanes_bounding_box
-from metadrive.utils import get_np_random
 
 from collections import deque 
 
@@ -58,7 +57,19 @@ class EdgeRoadNetwork(BaseRoadNetwork):
                 candidates.append((lane_key, lane_index))
 
         if not candidates:
-            return get_np_random().choice(list(self.graph.keys()))
+            # A random lane from anywhere on the map used to be returned here.
+            # Nothing downstream could tell that apart from a real answer, so a
+            # road id that does not exist placed the object -- or spawned the
+            # ego, via vehicle_config["spawn_lane_index"] -- kilometres away in
+            # silence. It also hid the callers' own fallbacks, which pick the
+            # rightmost lane from the scene's own lane list: those never ran
+            # because a random lane is neither None nor an exception.
+            logging.warning(
+                "find_rightmost_lane_by_road_id: no lane belongs to road %r "
+                "(%d lanes in the network). Returning None.",
+                target, len(self.graph)
+            )
+            return None
 
         rightmost = min(candidates, key=lambda x: x[1])
         return rightmost[0]
