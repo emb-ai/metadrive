@@ -8,8 +8,6 @@ from metadrive.utils.math import not_zero, wrap_to_pi, norm
 import logging
 from metadrive.component.road_network.edge_road_network import EdgeRoadNetwork
 
-from traffic_signs.stop_sign import StopSign
-
 
 class FrontBackObjects:
     def __init__(self, front_ret, back_ret, front_dist, back_dist):
@@ -458,6 +456,10 @@ class ModifiedIDMPolicy(IDMPolicy):
         """
         Find a stop sign that is on the current lane or next lane in the route.
         """
+        # Lazy import: avoids circular import
+        # metadrive.policy.idm_policy ↔ traffic_bench.signs (via base_traffic_sign).
+        from traffic_bench.signs.junction.yield_sign import StopSign
+
         if not hasattr(self.engine, 'traffic_sign_manager'):
             return None
 
