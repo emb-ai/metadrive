@@ -779,18 +779,30 @@ def metadrive_obs_to_plant2_batch(
         batch["sign_id"] = torch.tensor([_sign_code_to_id(code)], dtype=torch.long, device=device)
 
     if input_bev:
+        # Reproduce the training pipeline exactly. The dumper renders the same
+        # semantic map at 256 px over 64 m (plant2_frames: _BEV_RESOLUTION /
+        # _BEV_SIZE_METERS) and PlanTDataset then rotates it by +1 and keeps the
+        # central 128 px -- 32 m at 0.25 m/px. Evaluation used to rotate by -1
+        # and skip the crop, so the model was shown the scene turned 180 degrees
+        # at half the resolution over twice the area. PLANT2_BEV_LEGACY=1 brings
+        # the old behaviour back for an A/B.
+        legacy = os.environ.get("PLANT2_BEV_LEGACY", "").strip() in ("1", "true", "True")
+        render_res = bev_resolution if legacy else bev_resolution * 2
         bev_t = render_bev_plant2(
             engine, ego_vehicle,
-            resolution=bev_resolution,
+            resolution=render_res,
             size_meters=bev_size_meters,
             device=device,
         )
-        if bev_t is not None:
-            # BEV from render_bev_plant2 already has forward=top,
-            # matching CARLA convention after rot90 CCW — no extra rotation needed.
+        if bev_t is None:
+            batch["BEV"] = torch.zeros(1, 3, bev_resolution, bev_resolution,
+                                       dtype=torch.float32, device=device)
+        elif legacy:
             batch["BEV"] = torch.rot90(bev_t, k=-1, dims=[2, 3])
         else:
-            batch["BEV"] = torch.zeros(1, 3, bev_resolution, bev_resolution, dtype=torch.float32, device=device)
+            rotated = torch.rot90(bev_t, k=1, dims=[2, 3])
+            pad = bev_resolution // 2
+            batch["BEV"] = rotated[:, :, pad:-pad, pad:-pad]
 
 
     if input_ego_speed:
