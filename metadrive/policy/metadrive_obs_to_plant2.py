@@ -263,6 +263,15 @@ def boxes_to_objects_list(boxes, max_objects=30, include_stop_signs=True):
         elif cls_key in sign_like:
             if not x.get("affects_ego", True):
                 continue
+            # Counterfactual on the OBJECT channel. The sign reaches the model
+            # twice: as the global sign_id token and as an object whose class
+            # already separates the codes (4.2.1/4.2.2/4.2.3 are types 16/17/18).
+            # Forcing only the global token therefore proves nothing about the
+            # side the model chooses. This rewrites the object's class, leaving
+            # its pose untouched, so both channels can be swapped together.
+            forced_obj = (os.environ.get("PLANT2_FORCE_SIGN_OBJ_CODE") or "").strip()
+            if forced_obj and forced_obj in type_nums:
+                cls_key = forced_obj
 
         staticish.append((
             float(type_nums[cls_key]) if (sign_objs or cls_key not in sign_like)
