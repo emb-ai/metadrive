@@ -346,6 +346,15 @@ class BaseVehicle(BaseObject, BaseVehicleState):
                 lane = None
                 if map.road_network_type == EdgeRoadNetwork:
                     lane_key = map.road_network.find_rightmost_lane_by_road_id(self.config["spawn_lane_index"])
+                    if lane_key is None:
+                        # Better to lose the scene here than to run it with the
+                        # ego somewhere else entirely: the sign it was built
+                        # around would never enter the frame, and nothing in the
+                        # dump would say so.
+                        raise ValueError(
+                            "spawn_lane_index={!r} matches no lane in this map; "
+                            "the ego cannot be placed.".format(self.config["spawn_lane_index"])
+                        )
                     lane = map.road_network.get_lane(lane_key)
                     start_entry_lanes = [
                         lane_id
