@@ -417,15 +417,60 @@ def get_speed_limit_idx(speed_limit_kmh=None):
     return cats[key]
 
 
-def _sign_code_to_id(code):
+def _sign_code_to_id(code, value_kmh=None):
     try:
         _ensure_collect_boxes_import_paths()
         from util.sign_id import sign_code_to_id as _fn
-        return _fn(code)
+        return _fn(code, value_kmh)
     except Exception:
         if not code:
             return 0
         return _SIGN_FALLBACK.get(str(code).strip(), 0)
+
+
+# Which attribute of a sign object carries the number on its plate. Mirrors the
+# dump's _SIGN_VALUE_ATTR: reading whichever speed attribute happens to exist
+# would put a road speed on plates that prescribe nothing.
+_SIGN_VALUE_ATTR = {
+    "3.24": "speed_limit",
+    "5.31": "speed_limit",
+    "4.6": "min_speed",
+}
+
+
+def resolve_sign_value_from_engine(engine, code):
+    """The number on the placed plate in km/h, or None if it carries none.
+
+    Training tokenises a speed sign together with its number -- "3.24@40" is a
+    different token from "3.24@20", because the two demand opposite speeds. An
+    eval that passes the bare code hands the model a token it never saw trained
+    against any target, and the speed head answers at chance while every log
+    still shows the sign as present.
+    """
+    attr = _SIGN_VALUE_ATTR.get(str(code or "").strip())
+    if attr is None:
+        return None
+    try:
+        _value_kmh = _from_collector("_sign_value_kmh")
+    except Exception:
+        _value_kmh = None
+    mgr = getattr(engine, "traffic_sign_manager", None)
+    if mgr is None:
+        return None
+    for sign in getattr(mgr, "signs", []) or []:
+        if sign is None:
+            continue
+        if _value_kmh is not None:
+            val = _value_kmh(sign, code)
+            if val is not None:
+                return float(val)
+        raw = getattr(sign, attr, None)
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+    return None
 
 
 def resolve_sign_code_from_engine(engine, explicit_code=None):
@@ -822,7 +867,9 @@ def metadrive_obs_to_plant2_batch(
 
     if include_sign_id:
         code = resolve_sign_code_from_engine(engine, explicit_code=sign_code)
-        batch["sign_id"] = torch.tensor([_sign_code_to_id(code)], dtype=torch.long, device=device)
+        value_kmh = resolve_sign_value_from_engine(engine, code)
+        batch["sign_id"] = torch.tensor([_sign_code_to_id(code, value_kmh)],
+                                        dtype=torch.long, device=device)
 
     if input_bev:
         # Reproduce the training pipeline exactly. The dumper renders the same
