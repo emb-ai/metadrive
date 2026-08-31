@@ -428,6 +428,9 @@ def _sign_code_to_id(code, value_kmh=None):
         return _SIGN_FALLBACK.get(str(code).strip(), 0)
 
 
+_SIGN_DEBUG_SEEN = set()
+
+
 # Which attribute of a sign object carries the number on its plate. Mirrors the
 # dump's _SIGN_VALUE_ATTR: reading whichever speed attribute happens to exist
 # would put a road speed on plates that prescribe nothing.
@@ -868,8 +871,19 @@ def metadrive_obs_to_plant2_batch(
     if include_sign_id:
         code = resolve_sign_code_from_engine(engine, explicit_code=sign_code)
         value_kmh = resolve_sign_value_from_engine(engine, code)
-        batch["sign_id"] = torch.tensor([_sign_code_to_id(code, value_kmh)],
-                                        dtype=torch.long, device=device)
+        _sid = _sign_code_to_id(code, value_kmh)
+        if os.environ.get("PLANT2_DEBUG_SIGN", "") in ("1", "true", "True"):
+            # The token the model actually receives. A sign that is placed,
+            # visible and correctly scored can still reach the model as id 0 or
+            # as the number-less variant of its code, and nothing downstream
+            # says so -- the run just behaves as if the plate were blank.
+            global _SIGN_DEBUG_SEEN
+            key = (str(code), value_kmh, int(_sid))
+            if key not in _SIGN_DEBUG_SEEN:
+                _SIGN_DEBUG_SEEN.add(key)
+                print(f"[PlanT2Sign] code={code!r} value_kmh={value_kmh!r} sign_id={_sid}",
+                      flush=True)
+        batch["sign_id"] = torch.tensor([_sid], dtype=torch.long, device=device)
 
     if input_bev:
         # Reproduce the training pipeline exactly. The dumper renders the same
