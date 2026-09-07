@@ -399,7 +399,8 @@ _MODEL_BEV_RESOLUTION = _DUMP_BEV_RESOLUTION - 2 * _MODEL_BEV_CROP  # 128
 
 def render_bev_plant2(engine, ego_vehicle, resolution=_DUMP_BEV_RESOLUTION,
                       size_meters=_DUMP_BEV_SIZE_METERS,
-                      device="cpu", return_semantic_map=False):
+                      device="cpu", return_semantic_map=False,
+                      lateral_offset_m=0.0, heading_offset_rad=0.0):
     """
     PlanT2 BEV: semantic index map (0-4) -> RGB via PlanTVariables.bev_colors.
     Supports both NodeRoadNetwork and EdgeRoadNetwork.
@@ -424,6 +425,17 @@ def render_bev_plant2(engine, ego_vehicle, resolution=_DUMP_BEV_RESOLUTION,
     scale = resolution / size_meters
     ego_pos = np.array(ego_vehicle.position[:2])
     ego_heading = float(ego_vehicle.heading_theta)
+
+    # Optional virtual pose jitter for training-time augmentation: render the
+    # BEV as if the ego sat `lateral_offset_m` to its own left and were rotated
+    # by `heading_offset_rad`. The vehicle itself is NOT moved -- only this
+    # render's viewpoint -- so the dump can pair a perturbed BEV with labels
+    # that PlanTDataset.aug_sample then shifts by the same recorded amount.
+    # Defaults are the exact previous behaviour.
+    if lateral_offset_m or heading_offset_rad:
+        left = np.array([-np.sin(ego_heading), np.cos(ego_heading)])
+        ego_pos = ego_pos + left * float(lateral_offset_m)
+        ego_heading = ego_heading + float(heading_offset_rad)
 
     def world_to_ego_xy(wx, wy):
         dx = wx - ego_pos[0]
