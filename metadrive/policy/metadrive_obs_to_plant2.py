@@ -351,6 +351,19 @@ def collect_objects_ego_frame_from_plant2_boxes(
         max_distance=max_distance,
         range_factor_front=range_factor_front,
     )
+    if os.environ.get("PLANT2_DEBUG_BOXES"):
+        # What the model is actually being told is out there. Printed here, at
+        # the single place both the dump and the eval build their boxes, so the
+        # two sides can be compared line for line -- e.g. to confirm the
+        # auxiliary convoy a stop sign must give way to is visible at eval.
+        import collections
+        mix = collections.Counter(str(b.get("class")) for b in boxes[1:])
+        near = [(str(b.get("class")),
+                 round(float(np.hypot(b["position"][0], b["position"][1])), 1))
+                for b in boxes[1:]]
+        near.sort(key=lambda t: t[1])
+        print(f"[plant2_boxes] n={len(boxes) - 1} mix={dict(mix)} "
+              f"nearest={near[:6]}", flush=True)
     return boxes_to_objects_list(
         boxes,
         max_objects=max_objects,
